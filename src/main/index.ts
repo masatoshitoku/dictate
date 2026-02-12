@@ -11,6 +11,7 @@ import { shortcutManager, setupDefaultShortcuts } from './shortcuts';
 import { audioRecorder } from './services/audio-recorder';
 import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
+import { setupAutoUpdater } from './services/updater';
 import { typeText, checkAccessibilityPermission } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS } from '../shared/types';
 import {
@@ -66,7 +67,7 @@ let stopPromise: Promise<void> | null = null;
 function debugLog(msg: string): void {
   if (app.isPackaged) return;
   try {
-    console.log(`[typeless] ${msg}`);
+    console.log(`[dictate] ${msg}`);
   } catch {
     // Ignore EPIPE errors when stdout is closed
   }
@@ -622,6 +623,9 @@ async function initialize(): Promise<void> {
       buttons: ['OK'],
     });
   }
+
+  // Setup auto-updater
+  setupAutoUpdater();
 }
 
 // ============================================================================
