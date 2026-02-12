@@ -187,36 +187,46 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex items-center justify-center bg-transparent">
-      <div className="flex items-center gap-2 bg-[#1a1a1a] rounded-full px-3 py-2 shadow-2xl border border-gray-700/50">
+      <div className={`flex items-center gap-3 backdrop-blur-xl rounded-2xl px-4 py-3 border transition-all duration-300 ${
+        isRecording
+          ? 'bg-rose-500/10 border-rose-400/30 shadow-[0_8px_32px_rgba(244,63,94,0.3)]'
+          : isProcessing || isTyping
+            ? 'bg-violet-500/10 border-violet-400/30 shadow-[0_8px_32px_rgba(139,92,246,0.3)]'
+            : 'bg-white/10 border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.3)]'
+      }`}>
         {/* Cancel button */}
         <button
           onClick={handleCancel}
-          className="w-10 h-10 rounded-full bg-gray-700/50 hover:bg-gray-600/50 flex items-center justify-center transition-colors"
+          className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-sm flex items-center justify-center transition-all duration-200 border border-white/10 hover:border-white/30 hover:scale-105 active:scale-95"
           title="Cancel"
         >
-          <svg className="w-5 h-5 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className="w-5 h-5 text-white/70 hover:text-white/90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
 
         {/* Waveform visualization */}
         <div
-          className="flex items-center gap-[3px] h-8 px-2 cursor-pointer"
+          className="flex items-center gap-[4px] h-10 px-3 cursor-pointer rounded-xl bg-white/5 border border-white/10"
           onClick={handleToggle}
         >
           {isProcessing || isTyping ? (
-            <div className="flex items-center gap-1">
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="flex items-center gap-1.5">
+              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
             </div>
           ) : (
             audioLevels.map((level, i) => (
               <div
                 key={i}
-                className="w-[3px] bg-gray-300 rounded-full transition-all duration-75"
+                className={`w-[4px] rounded-full transition-all duration-100 ${
+                  isRecording
+                    ? 'bg-gradient-to-t from-rose-500 to-orange-400'
+                    : 'bg-gradient-to-t from-violet-400/60 to-cyan-400/60'
+                }`}
                 style={{
-                  height: `${Math.max(8, level * 28)}px`,
+                  height: `${Math.max(10, level * 32)}px`,
                 }}
               />
             ))
@@ -227,14 +237,14 @@ export default function App() {
         <button
           onClick={handleConfirm}
           disabled={!isRecording}
-          className={`w-10 h-10 rounded-full flex items-center justify-center transition-colors ${
+          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 border ${
             isRecording
-              ? 'bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-400'
-              : 'bg-gray-700/50 text-gray-500'
+              ? 'bg-gradient-to-br from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/40 hover:to-cyan-500/40 border-emerald-400/30 hover:border-emerald-400/50 text-emerald-300 hover:scale-105 active:scale-95'
+              : 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
           }`}
           title="Confirm"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </button>

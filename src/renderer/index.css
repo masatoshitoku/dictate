@@ -20,3 +20,17 @@ html, body, #root {
 button {
   -webkit-app-region: no-drag;
 }
+
+/* Glassmorphism enhancements */
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
+  }
+}
+
+.recording-glow {
+  animation: glow-pulse 1.5s ease-in-out infinite;
+}
