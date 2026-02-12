@@ -1,5 +1,5 @@
 {
-  "name": "typeless-clone",
+  "name": "dictate",
   "version": "1.0.0",
   "description": "AI-powered voice dictation app for macOS",
   "main": "dist/main/main/index.js",
@@ -21,11 +21,11 @@
     "test:coverage": "vitest run --coverage",
     "dist:mac": "npm run build && electron-builder --mac --universal"
   },
-  "author": "Typeless Clone Contributors",
+  "author": "Dictate Contributors",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/typeless-clone/typeless-clone"
+    "url": "https://github.com/MasatoshiToku/dictate"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
@@ -62,23 +62,24 @@
     "zustand": "^4.4.7"
   },
   "build": {
-    "appId": "com.typeless-clone.app",
-    "productName": "Typeless Clone",
+    "appId": "com.dictate.app",
+    "productName": "Dictate",
+    "publish": {
+      "provider": "github",
+      "owner": "MasatoshiToku",
+      "repo": "dictate"
+    },
     "mac": {
       "category": "public.app-category.productivity",
       "icon": "resources/icon.icns",
       "target": [
         {
           "target": "dmg",
-          "arch": [
-            "universal"
-          ]
+          "arch": ["universal"]
         },
         {
           "target": "zip",
-          "arch": [
-            "universal"
-          ]
+          "arch": ["universal"]
         }
       ],
       "entitlements": "entitlements.mac.plist",
