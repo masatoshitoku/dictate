@@ -22,6 +22,18 @@ export interface DictionaryEntry {
   usageCount: number;
 }
 
+export interface ShortcutSettings {
+  toggleRecording: string;
+  cancelRecording: string;
+  openSettings: string;
+}
+
+export const DEFAULT_SHORTCUTS: ShortcutSettings = {
+  toggleRecording: 'Alt+Space',
+  cancelRecording: 'Alt+Escape',  // Changed from 'Escape' - plain Escape conflicts with other apps
+  openSettings: 'F2',
+};
+
 export interface AppSettings {
   hotkey: string;
   recordingMode: 'push-to-talk' | 'toggle';
@@ -29,6 +41,7 @@ export interface AppSettings {
   language: 'ja' | 'en' | 'auto';
   autoLaunch: boolean;
   showInMenuBar: boolean;
+  shortcuts: ShortcutSettings;
 }
 
 export interface ApiKeyValidationResult {
@@ -66,6 +79,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   language: 'ja',
   autoLaunch: false,
   showInMenuBar: true,
+  shortcuts: DEFAULT_SHORTCUTS,
 };
 
 // IPC Channel Constants - use these instead of string literals
@@ -100,6 +114,12 @@ export const IPC_CHANNELS = {
   OPEN_SETTINGS: 'open-settings',
   CLOSE_SETTINGS: 'close-settings',
 
+  // Shortcuts
+  GET_SHORTCUTS: 'get-shortcuts',
+  SAVE_SHORTCUTS: 'save-shortcuts',
+  PAUSE_SHORTCUTS: 'pause-shortcuts',
+  RESUME_SHORTCUTS: 'resume-shortcuts',
+
   // Events (Main -> Renderer)
   STATUS_CHANGED: 'status-changed',
   TRANSCRIPTION_RESULT: 'transcription-result',
@@ -107,6 +127,9 @@ export const IPC_CHANNELS = {
   START_AUDIO_CAPTURE: 'start-audio-capture',
   STOP_AUDIO_CAPTURE: 'stop-audio-capture',
   AUDIO_DATA_READY: 'audio-data-ready',
+
+  // Permission
+  CHECK_MICROPHONE_PERMISSION: 'check-microphone-permission',
 } as const;
 
 export type IPCChannelName = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

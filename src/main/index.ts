@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences, session } from 'electron';
 import * as path from 'path';
 
 // Prevent EPIPE errors when stdout/stderr is closed
@@ -7,13 +7,13 @@ process.stderr?.on?.('error', () => {});
 
 import Store from 'electron-store';
 import { trayManager } from './tray';
-import { shortcutManager, setupDefaultShortcuts } from './shortcuts';
+import { shortcutManager, setupShortcuts } from './shortcuts';
 import { audioRecorder } from './services/audio-recorder';
 import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
 import { setupAutoUpdater } from './services/updater';
 import { typeText, checkAccessibilityPermission } from './text-input';
-import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS } from '../shared/types';
+import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
 import {
   getApiKey,
   hasApiKey,
@@ -62,10 +62,9 @@ let stopPromise: Promise<void> | null = null;
 // ============================================================================
 
 /**
- * Debug logging (disabled in production, no sensitive data)
+ * Debug logging (ENABLED in all modes for debugging permission issue)
  */
 function debugLog(msg: string): void {
-  if (app.isPackaged) return;
   try {
     console.log(`[dictate] ${msg}`);
   } catch {
@@ -166,6 +165,20 @@ function createWindow(): void {
   });
 
   audioRecorder.setMainWindow(mainWindow);
+
+  // Sync isRecording state when audio-recorder times out
+  audioRecorder.setOnTimeoutCallback(() => {
+    debugLog('Recording timeout - syncing main process state');
+    isRecording = false;
+    stopPromise = null;
+    trayManager.setRecordingState(false, getTrayConfig());
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      // Tell renderer to cancel/cleanup its recording state
+      mainWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
+      mainWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
+      mainWindow.hide();
+    }
+  });
 }
 
 function createSettingsWindow(): void {
@@ -195,12 +208,39 @@ function createSettingsWindow(): void {
 // Recording Logic
 // ============================================================================
 
+let lastStartTime = 0;
+const START_DEBOUNCE_MS = 300; // Only debounce starting, not stopping
+
 async function toggleRecording(): Promise<void> {
-  if (!mainWindow) return;
+  const now = Date.now();
+
+  if (!mainWindow) {
+    // API Key未設定の場合、設定画面を開くよう促す
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Setup Required',
+      message: 'API Keyを設定してください',
+      detail: '録音機能を使用するには、Gemini API Keyの設定が必要です。',
+      buttons: ['設定を開く', '後で'],
+    }).then((result) => {
+      if (result.response === 0) {
+        createSettingsWindow();
+      }
+    });
+    return;
+  }
 
   if (isRecording || stopPromise) {
+    // Always allow stopping - no debounce for stop
     await stopRecording();
   } else {
+    // Debounce only for starting
+    if (now - lastStartTime < START_DEBOUNCE_MS) {
+      debugLog('Start debounced');
+      return;
+    }
+    lastStartTime = now;
+
     // Ensure window is visible on all workspaces before showing
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     mainWindow.setAlwaysOnTop(true, 'floating');
@@ -236,13 +276,15 @@ async function processTranscription(transcribedText: string): Promise<void> {
     return;
   }
 
+  debugLog(`About to type: "${transcribedText}"`);
+
   // Wait for window to fully hide before typing
   await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
 
   // Type the text
   const settings = store.get('settings');
   await typeText(transcribedText, { speed: settings.typingSpeed });
-  debugLog('Typing completed');
+  debugLog(`Typing completed for: "${transcribedText}"`);
 }
 
 async function stopRecording(): Promise<void> {
@@ -278,7 +320,7 @@ async function stopRecording(): Promise<void> {
       const gemini = getGeminiService();
       const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
       const transcribedText = await gemini.transcribeAudioBuffer(audioBuffer, 'audio/webm', dictionaryPrompt);
-      debugLog('Transcription completed');
+      debugLog(`Transcription completed: "${transcribedText}"`);
 
       // Hide window before typing
       window.hide();
@@ -550,24 +592,101 @@ function setupIPC(): void {
       return false;
     }
   });
+
+  // Shortcuts
+  ipcMain.handle(IPC_CHANNELS.GET_SHORTCUTS, () => {
+    try {
+      const settings = store.get('settings');
+      return settings.shortcuts || DEFAULT_SHORTCUTS;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to get shortcuts: ${message}`);
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SAVE_SHORTCUTS, (_event, shortcuts: ShortcutSettings) => {
+    try {
+      const success = shortcutManager.updateShortcuts(shortcuts);
+      if (success) {
+        const currentSettings = store.get('settings');
+        store.set('settings', { ...currentSettings, shortcuts });
+      }
+      return success;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to save shortcuts: ${message}`);
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.PAUSE_SHORTCUTS, () => {
+    try {
+      shortcutManager.pause();
+      return true;
+    } catch (error: unknown) {
+      return false;
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.RESUME_SHORTCUTS, () => {
+    try {
+      shortcutManager.resume();
+      return true;
+    } catch (error: unknown) {
+      return false;
+    }
+  });
+
+  // Permission check - returns cached status without triggering dialog
+  ipcMain.handle(IPC_CHANNELS.CHECK_MICROPHONE_PERMISSION, () => {
+    const result = checkMicrophonePermission();
+    debugLog(`IPC CHECK_MICROPHONE_PERMISSION called, returning: ${result}`);
+    return result;
+  });
 }
 
 // ============================================================================
 // Permission Checks
 // ============================================================================
 
-async function checkMicrophonePermission(): Promise<boolean> {
+let microphonePermissionGranted = false;
+let microphonePermissionChecked = false;
+
+async function requestMicrophonePermission(): Promise<boolean> {
+  // Only request once per app lifetime
+  if (microphonePermissionChecked) {
+    return microphonePermissionGranted;
+  }
+  microphonePermissionChecked = true;
+
   const status = systemPreferences.getMediaAccessStatus('microphone');
+  debugLog(`Microphone permission status: ${status}`);
 
   if (status === 'granted') {
+    microphonePermissionGranted = true;
     return true;
   }
 
   if (status === 'not-determined') {
-    return await systemPreferences.askForMediaAccess('microphone');
+    // First time - request permission from main process (this triggers macOS dialog)
+    debugLog('Requesting microphone permission from macOS...');
+    try {
+      microphonePermissionGranted = await systemPreferences.askForMediaAccess('microphone');
+      debugLog(`Microphone permission result: ${microphonePermissionGranted}`);
+      return microphonePermissionGranted;
+    } catch (error) {
+      debugLog(`Microphone permission request failed: ${error}`);
+      return false;
+    }
   }
 
+  // 'denied' or 'restricted'
+  microphonePermissionGranted = false;
   return false;
+}
+
+function checkMicrophonePermission(): boolean {
+  // Just check cached status - don't request
+  return microphonePermissionGranted;
 }
 
 // ============================================================================
@@ -578,6 +697,10 @@ async function initialize(): Promise<void> {
   // Setup IPC first so settings window can use it
   setupIPC();
 
+  // Get stored shortcuts
+  const settings = store.get('settings');
+  const shortcuts = settings.shortcuts || DEFAULT_SHORTCUTS;
+
   const apiKey = getApiKey();
 
   if (!apiKey) {
@@ -586,7 +709,11 @@ async function initialize(): Promise<void> {
 
     // Still create tray for access
     trayManager.create(getTrayConfig());
-    setupDefaultShortcuts(toggleRecording, cancelRecording, createSettingsWindow);
+    setupShortcuts({
+      onToggleRecording: toggleRecording,
+      onCancelRecording: cancelRecording,
+      onOpenSettings: createSettingsWindow,
+    }, shortcuts);
 
     return;
   }
@@ -598,10 +725,15 @@ async function initialize(): Promise<void> {
 
   trayManager.create(getTrayConfig());
 
-  setupDefaultShortcuts(toggleRecording, cancelRecording, createSettingsWindow);
+  setupShortcuts({
+    onToggleRecording: toggleRecording,
+    onCancelRecording: cancelRecording,
+    onOpenSettings: createSettingsWindow,
+  }, shortcuts);
 
-  // Check microphone permission
-  const hasMicrophone = await checkMicrophonePermission();
+  // Request microphone permission ONCE from main process
+  // This prevents the renderer from triggering multiple permission dialogs
+  const hasMicrophone = await requestMicrophonePermission();
   if (!hasMicrophone) {
     dialog.showMessageBox({
       type: 'warning',
@@ -632,7 +764,28 @@ async function initialize(): Promise<void> {
 // App Lifecycle
 // ============================================================================
 
-app.whenReady().then(initialize);
+app.whenReady().then(() => {
+  // Set up permission handler to auto-grant media permissions
+  // This prevents the infinite permission dialog loop
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'microphone'];
+    if (allowedPermissions.includes(permission)) {
+      debugLog(`Auto-granting permission: ${permission}`);
+      callback(true);
+    } else {
+      debugLog(`Permission requested: ${permission}`);
+      callback(true); // Allow other permissions too for now
+    }
+  });
+
+  // Also handle permission checks
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    const allowedPermissions = ['media', 'mediaKeySystem', 'microphone'];
+    return allowedPermissions.includes(permission);
+  });
+
+  initialize();
+});
 
 // Disable DevTools in production
 app.on('web-contents-created', (_, contents) => {

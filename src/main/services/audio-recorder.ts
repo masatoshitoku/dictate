@@ -14,6 +14,7 @@ export class AudioRecorder {
   private isStopping = false;
   private tempDir: string;
   private pendingStopPromise: Promise<Buffer> | null = null;
+  private onTimeoutCallback: (() => void) | null = null;
 
   constructor() {
     this.tempDir = path.join(os.tmpdir(), 'typeless-clone');
@@ -26,23 +27,47 @@ export class AudioRecorder {
     this.mainWindow = window;
   }
 
+  setOnTimeoutCallback(callback: () => void): void {
+    this.onTimeoutCallback = callback;
+  }
+
   startRecording(): void {
-    if (this.isRecording || this.isStopping || !this.mainWindow) return;
+    if (!this.mainWindow) return;
+
+    // Force reset state if stuck
+    if (this.isStopping) {
+      console.log('[AudioRecorder] Forcing reset of isStopping flag');
+      this.isStopping = false;
+      this.pendingStopPromise = null;
+    }
+
+    if (this.isRecording) {
+      console.log('[AudioRecorder] Already recording, ignoring start');
+      return;
+    }
 
     this.isRecording = true;
-    this.isStopping = false;
     this.pendingStopPromise = null;
     this.mainWindow.webContents.send('start-audio-capture');
+    console.log('[AudioRecorder] Recording started, isRecording=true');
   }
 
   stopRecording(): Promise<Buffer> {
+    console.log(`[AudioRecorder] stopRecording called, isRecording=${this.isRecording}, isStopping=${this.isStopping}`);
+
     // If already stopping, return the pending promise
     if (this.isStopping && this.pendingStopPromise) {
+      console.log('[AudioRecorder] Already stopping, returning pending promise');
       return this.pendingStopPromise;
     }
 
     this.pendingStopPromise = new Promise((resolve, reject) => {
       if (!this.isRecording || !this.mainWindow) {
+        console.log(`[AudioRecorder] Cannot stop: isRecording=${this.isRecording}, hasWindow=${!!this.mainWindow}`);
+        // Reset state to prevent stuck state
+        this.isRecording = false;
+        this.isStopping = false;
+        this.pendingStopPromise = null;
         reject(new Error('Not recording'));
         return;
       }
@@ -54,6 +79,7 @@ export class AudioRecorder {
         this.isRecording = false;
         this.isStopping = false;
         this.pendingStopPromise = null;
+        console.log(`[AudioRecorder] Audio received, ${audioData.byteLength} bytes`);
         resolve(Buffer.from(audioData));
       };
 
@@ -63,9 +89,14 @@ export class AudioRecorder {
       setTimeout(() => {
         ipcMain.removeListener('audio-data-ready', handler);
         if (this.isRecording || this.isStopping) {
+          console.log('[AudioRecorder] Recording timeout, resetting state');
           this.isRecording = false;
           this.isStopping = false;
           this.pendingStopPromise = null;
+          // Notify main process to sync its state
+          if (this.onTimeoutCallback) {
+            this.onTimeoutCallback();
+          }
           reject(new Error('Recording timeout'));
         }
       }, 5000);

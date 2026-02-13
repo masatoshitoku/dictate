@@ -34,6 +34,12 @@ const IPC_CHANNELS = {
   OPEN_SETTINGS: 'open-settings',
   CLOSE_SETTINGS: 'close-settings',
 
+  // Shortcuts
+  GET_SHORTCUTS: 'get-shortcuts',
+  SAVE_SHORTCUTS: 'save-shortcuts',
+  PAUSE_SHORTCUTS: 'pause-shortcuts',
+  RESUME_SHORTCUTS: 'resume-shortcuts',
+
   // Events (Main -> Renderer)
   STATUS_CHANGED: 'status-changed',
   TRANSCRIPTION_RESULT: 'transcription-result',
@@ -41,6 +47,9 @@ const IPC_CHANNELS = {
   START_AUDIO_CAPTURE: 'start-audio-capture',
   STOP_AUDIO_CAPTURE: 'stop-audio-capture',
   AUDIO_DATA_READY: 'audio-data-ready',
+
+  // Permission
+  CHECK_MICROPHONE_PERMISSION: 'check-microphone-permission',
 } as const;
 
 // Type definitions for preload
@@ -51,6 +60,7 @@ interface AppSettings {
   language: 'ja' | 'en' | 'auto';
   autoLaunch: boolean;
   showInMenuBar: boolean;
+  shortcuts: ShortcutSettings;
 }
 
 interface TranscriptionResult {
@@ -74,6 +84,12 @@ interface ApiKeyValidationResult {
   error?: string;
 }
 
+interface ShortcutSettings {
+  toggleRecording: string;
+  cancelRecording: string;
+  openSettings: string;
+}
+
 type RecordingStatus = 'idle' | 'recording' | 'processing' | 'typing' | 'error';
 
 export interface ElectronAPI {
@@ -82,6 +98,9 @@ export interface ElectronAPI {
   stopRecording: () => Promise<void>;
   toggleRecording: () => Promise<void>;
   cancelRecording: () => Promise<void>;
+
+  // Permission
+  checkMicrophonePermission: () => Promise<boolean>;
 
   // Settings
   getSettings: () => Promise<AppSettings>;
@@ -107,6 +126,12 @@ export interface ElectronAPI {
   openSettings: () => Promise<void>;
   closeSettings: () => Promise<void>;
 
+  // Shortcuts
+  getShortcuts: () => Promise<ShortcutSettings>;
+  saveShortcuts: (shortcuts: ShortcutSettings) => Promise<boolean>;
+  pauseShortcuts: () => Promise<boolean>;
+  resumeShortcuts: () => Promise<boolean>;
+
   // Events
   onStatusChanged: (callback: (status: RecordingStatus) => void) => () => void;
   onTranscriptionResult: (callback: (result: TranscriptionResult) => void) => () => void;
@@ -124,6 +149,9 @@ const electronAPI: ElectronAPI = {
   stopRecording: () => ipcRenderer.invoke(IPC_CHANNELS.STOP_RECORDING),
   toggleRecording: () => ipcRenderer.invoke(IPC_CHANNELS.TOGGLE_RECORDING),
   cancelRecording: () => ipcRenderer.invoke(IPC_CHANNELS.CANCEL_RECORDING),
+
+  // Permission
+  checkMicrophonePermission: () => ipcRenderer.invoke(IPC_CHANNELS.CHECK_MICROPHONE_PERMISSION),
 
   // Settings
   getSettings: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SETTINGS),
@@ -148,6 +176,12 @@ const electronAPI: ElectronAPI = {
   // Window
   openSettings: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SETTINGS),
   closeSettings: () => ipcRenderer.invoke(IPC_CHANNELS.CLOSE_SETTINGS),
+
+  // Shortcuts
+  getShortcuts: () => ipcRenderer.invoke(IPC_CHANNELS.GET_SHORTCUTS),
+  saveShortcuts: (shortcuts) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_SHORTCUTS, shortcuts),
+  pauseShortcuts: () => ipcRenderer.invoke(IPC_CHANNELS.PAUSE_SHORTCUTS),
+  resumeShortcuts: () => ipcRenderer.invoke(IPC_CHANNELS.RESUME_SHORTCUTS),
 
   // Events
   onStatusChanged: (callback) => {

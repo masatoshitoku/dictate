@@ -1,5 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useStore } from './store';
+
+// Singleton stream manager - survives component remounts
+let globalStream: MediaStream | null = null;
+let streamInitPromise: Promise<MediaStream | null> | null = null;
+let permissionRequested = false;
 
 export default function App() {
   const { status, setStatus, setLastTranscription, setError } = useStore();
@@ -9,14 +14,14 @@ export default function App() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationRef = useRef<number | null>(null);
   const [audioLevels, setAudioLevels] = useState<number[]>(Array(7).fill(0.2));
-  const maxAudioLevelRef = useRef<number>(0); // Track max audio level during recording
+  const maxAudioLevelRef = useRef<number>(0);
 
   const isRecording = status === 'recording';
   const isProcessing = status === 'processing';
   const isTyping = status === 'typing';
 
-  // Cleanup function
-  const cleanupRecording = () => {
+  // Cleanup function - does NOT stop the global stream
+  const cleanupRecording = useCallback(() => {
     if (animationRef.current) {
       cancelAnimationFrame(animationRef.current);
       animationRef.current = null;
@@ -26,16 +31,75 @@ export default function App() {
       audioContextRef.current = null;
     }
     analyserRef.current = null;
-    if (mediaRecorderRef.current) {
-      if (mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stream.getTracks().forEach((track) => track.stop());
+    // Stop MediaRecorder if still recording before nulling
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+      } catch {
+        // Ignore errors when stopping
       }
-      mediaRecorderRef.current = null;
     }
+    mediaRecorderRef.current = null;
     audioChunksRef.current = [];
     maxAudioLevelRef.current = 0;
     setAudioLevels(Array(7).fill(0.2));
-  };
+  }, []);
+
+  // Initialize stream ONCE globally - only if main process has granted permission
+  const initGlobalStream = useCallback(async (): Promise<MediaStream | null> => {
+    // Already have a valid stream
+    if (globalStream && globalStream.active) {
+      return globalStream;
+    }
+
+    // Already requesting - wait for it
+    if (streamInitPromise) {
+      return streamInitPromise;
+    }
+
+    // Already tried and failed/denied
+    if (permissionRequested && !globalStream) {
+      return null;
+    }
+
+    // Check if main process has already granted permission
+    // This prevents the renderer from triggering macOS permission dialog
+    const hasPermission = await window.electronAPI.checkMicrophonePermission();
+    if (!hasPermission) {
+      console.log('[Dictate] Microphone permission not granted by main process');
+      setError('マイクへのアクセスが許可されていません。システム環境設定で許可してください。');
+      permissionRequested = true;
+      return null;
+    }
+
+    // Permission already granted by main process - safe to call getUserMedia
+    permissionRequested = true;
+    streamInitPromise = (async () => {
+      try {
+        console.log('[Dictate] Getting microphone stream (permission already granted)');
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
+        globalStream = stream;
+        console.log('[Dictate] Microphone stream acquired');
+        return stream;
+      } catch (error) {
+        console.error('[Dictate] Failed to get microphone stream:', error);
+        globalStream = null;
+        setError('マイクへのアクセスに失敗しました。');
+        return null;
+      } finally {
+        streamInitPromise = null;
+      }
+    })();
+
+    return streamInitPromise;
+  }, [setError]);
 
   useEffect(() => {
     const unsubscribeStatus = window.electronAPI.onStatusChanged((newStatus) => {
@@ -55,14 +119,11 @@ export default function App() {
         // Clean up any previous recording first
         cleanupRecording();
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            channelCount: 1,
-            sampleRate: 16000,
-            echoCancellation: true,
-            noiseSuppression: true,
-          },
-        });
+        // Get or reuse global media stream (never requests permission more than once)
+        const stream = await initGlobalStream();
+        if (!stream) {
+          return; // Error already set by initGlobalStream
+        }
 
         // Set up audio analyser for visualization
         const audioContext = new AudioContext();
@@ -127,6 +188,13 @@ export default function App() {
 
       console.log('Max audio level during recording:', maxAudioLevelRef.current);
 
+      // If no active recorder, send empty data to prevent timeout
+      if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
+        console.log('No active recorder, sending empty audio data');
+        window.electronAPI.sendAudioData(new ArrayBuffer(0));
+        return;
+      }
+
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         const recorder = mediaRecorderRef.current;
 
@@ -137,8 +205,7 @@ export default function App() {
           const arrayBuffer = await audioBlob.arrayBuffer();
           window.electronAPI.sendAudioData(arrayBuffer);
 
-          // Cleanup
-          recorder.stream.getTracks().forEach((track) => track.stop());
+          // Cleanup - but keep the stream alive for reuse
           if (audioContextRef.current) {
             audioContextRef.current.close();
             audioContextRef.current = null;
@@ -168,8 +235,10 @@ export default function App() {
       unsubscribeStopCapture();
       unsubscribeCancelRecording();
       cleanupRecording();
+      // NOTE: Do NOT stop globalStream here - it survives component remounts
+      // The stream is only stopped when the app process exits
     };
-  }, [setStatus, setLastTranscription, setError]);
+  }, [setStatus, setLastTranscription, setError, cleanupRecording, initGlobalStream]);
 
   const handleCancel = () => {
     window.electronAPI.cancelRecording();
