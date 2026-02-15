@@ -1,0 +1,109 @@
+# Gitleaks Configuration - 5-Layer Secret Defense System
+# Global configuration for all repositories
+# Last Updated: 2026-02-15
+
+title = "Gitleaks 5-Layer Secret Defense"
+
+[extend]
+# Use built-in rules (800+ patterns)
+useDefault = true
+
+# Custom rules for specific patterns
+[[rules]]
+id = "salesforce-session-id"
+description = "Salesforce Session ID"
+regex = '''00D[a-zA-Z0-9]{15}![a-zA-Z0-9.]{110,}'''
+tags = ["salesforce", "session"]
+[[rules.Entropies]]
+Min = "4.5"
+Max = "8.0"
+
+[[rules]]
+id = "notion-integration-token"
+description = "Notion Integration Token"
+regex = '''ntn_[a-zA-Z0-9]{40,60}'''
+tags = ["notion", "api-token"]
+
+[[rules]]
+id = "slack-bot-token"
+description = "Slack Bot Token"
+regex = '''xoxb-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24,}'''
+tags = ["slack", "bot-token"]
+
+[[rules]]
+id = "slack-user-token"
+description = "Slack User Token"
+regex = '''xoxp-[0-9]{10,}-[0-9]{10,}-[a-zA-Z0-9]{24,}'''
+tags = ["slack", "user-token"]
+
+[[rules]]
+id = "openai-api-key"
+description = "OpenAI API Key"
+regex = '''sk-proj-[a-zA-Z0-9]{20,}'''
+tags = ["openai", "api-key"]
+
+[[rules]]
+id = "clasp-script-id"
+description = "Google Apps Script ID (low severity - project identifier)"
+regex = '''"scriptId":\s*"[a-zA-Z0-9_-]{20,}"'''
+tags = ["gas", "script-id"]
+# Lower severity as it's a project identifier, not a secret
+[rules.allowlist]
+paths = ['''.clasp.json$''']
+
+# Global Allowlist
+[allowlist]
+description = "Allowlist for false positives"
+
+# Paths to exclude
+paths = [
+  '''\.env\.example$''',
+  '''\.env\.sample$''',
+  '''\.env\.template$''',
+  '''^\.clasp\.json$''',
+  '''package-lock\.json$''',
+  '''yarn\.lock$''',
+  '''pnpm-lock\.yaml$''',
+]
+
+# Regexes to ignore
+regexes = [
+  # Placeholders
+  '''YOUR_[A-Z_]+_HERE''',
+  '''<YOUR_[A-Z_]+>''',
+  '''YOUR-[A-Z-]+-HERE''',
+
+  # Environment variable references
+  '''process\.env\.[A-Z_]+''',
+  '''process\.env\[["'][A-Z_]+["']\]''',
+  '''getProperty\(["'][A-Z_]+["']\)''',
+  '''PropertiesService\.getScriptProperties\(\)\.getProperty\(''',
+
+  # CI/CD variable references
+  '''secrets\.[A-Z_]+''',
+  '''\$\{\{.*secrets\..*\}\}''',
+  '''\$\{env\.[A-Z_]+\}''',
+
+  # Redacted patterns
+  '''ntn_\*\*\*REDACTED\*\*\*''',
+  '''xoxb-\*\*\*REDACTED\*\*\*''',
+  '''sk-proj-\*\*\*REDACTED\*\*\*''',
+
+  # Example patterns with obvious placeholders
+  '''xoxb-xxx''',
+  '''sk-proj-xxx''',
+  '''ntn_xxx''',
+
+  # X marks pattern (12+ X's)
+  '''[XYZ]{12,}''',
+]
+
+# Stopwords to ignore (partial matches)
+stopwords = [
+  "example",
+  "sample",
+  "test",
+  "dummy",
+  "placeholder",
+  "XXXXXXXX",
+]
