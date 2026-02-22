@@ -47,9 +47,24 @@ export default function App() {
 
   // Initialize stream ONCE globally - only if main process has granted permission
   const initGlobalStream = useCallback(async (): Promise<MediaStream | null> => {
-    // Already have a valid stream
+    // Already have a valid stream - also check track state
     if (globalStream && globalStream.active) {
-      return globalStream;
+      const tracks = globalStream.getAudioTracks();
+      const allTracksLive = tracks.length > 0 && tracks.every(track => track.readyState === 'live');
+      if (allTracksLive) {
+        return globalStream;
+      }
+      // Tracks ended but stream still marked active - reset
+      console.log('[Dictate] Audio tracks ended, resetting stream...');
+      globalStream = null;
+      permissionRequested = false;
+    }
+
+    // Stream became inactive - reset and retry
+    if (globalStream && !globalStream.active) {
+      console.log('[Dictate] Stream became inactive, resetting...');
+      globalStream = null;
+      permissionRequested = false;
     }
 
     // Already requesting - wait for it
@@ -57,7 +72,7 @@ export default function App() {
       return streamInitPromise;
     }
 
-    // Already tried and failed/denied
+    // Already tried and failed/denied (but not due to inactive stream)
     if (permissionRequested && !globalStream) {
       return null;
     }
@@ -86,6 +101,16 @@ export default function App() {
           },
         });
         globalStream = stream;
+
+        // Monitor track ended events
+        stream.getAudioTracks().forEach(track => {
+          track.onended = () => {
+            console.log('[Dictate] Audio track ended unexpectedly');
+            globalStream = null;
+            permissionRequested = false;
+          };
+        });
+
         console.log('[Dictate] Microphone stream acquired');
         return stream;
       } catch (error) {
@@ -115,27 +140,72 @@ export default function App() {
     });
 
     const unsubscribeStartCapture = window.electronAPI.onStartAudioCapture(async () => {
+      console.log('[Renderer] ====== onStartAudioCapture received ======');
+      console.log('[Renderer] Current globalStream:', globalStream);
+      console.log('[Renderer] globalStream active:', globalStream?.active);
+      console.log('[Renderer] Current mediaRecorderRef:', mediaRecorderRef.current?.state);
+
       try {
         // Clean up any previous recording first
+        console.log('[Renderer] Calling cleanupRecording...');
         cleanupRecording();
 
         // Get or reuse global media stream (never requests permission more than once)
+        console.log('[Renderer] Getting global stream...');
         const stream = await initGlobalStream();
+        console.log('[Renderer] Got stream:', !!stream, 'active:', stream?.active);
         if (!stream) {
+          console.log('[Renderer] No stream returned, aborting');
           return; // Error already set by initGlobalStream
         }
 
         // Set up audio analyser for visualization
         const audioContext = new AudioContext();
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
         audioContextRef.current = audioContext;
+
+        // Monitor AudioContext state changes
+        audioContext.onstatechange = () => {
+          console.log('[Dictate] AudioContext state changed:', audioContext.state);
+          if (audioContext.state === 'suspended' || audioContext.state === 'closed') {
+            console.error('[Dictate] AudioContext suspended/closed during recording');
+          }
+        };
+
         const source = audioContext.createMediaStreamSource(stream);
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 32;
         source.connect(analyser);
         analyserRef.current = analyser;
 
-        // Start animation loop
+        // Start animation loop with state monitoring
+        let monitorCounter = 0;
         const updateLevels = () => {
+          // Periodic state check (every ~60 frames = ~1 second)
+          monitorCounter++;
+          if (monitorCounter % 60 === 0) {
+            // Check stream state
+            if (globalStream && !globalStream.active) {
+              console.error('[Dictate] DETECTED: Stream became inactive during recording!');
+            }
+            const tracks = globalStream?.getAudioTracks() || [];
+            tracks.forEach((track, i) => {
+              if (track.readyState === 'ended') {
+                console.error(`[Dictate] DETECTED: Track ${i} ended during recording!`);
+              }
+            });
+            // Check MediaRecorder state
+            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
+              console.error('[Dictate] DETECTED: MediaRecorder became inactive during recording!');
+            }
+            // Check AudioContext state
+            if (audioContextRef.current && audioContextRef.current.state !== 'running') {
+              console.error('[Dictate] DETECTED: AudioContext not running:', audioContextRef.current.state);
+            }
+          }
+
           if (analyserRef.current) {
             const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
             analyserRef.current.getByteFrequencyData(dataArray);
@@ -158,10 +228,12 @@ export default function App() {
         updateLevels();
 
         audioChunksRef.current = [];
+        console.log('[Renderer] Creating MediaRecorder...');
 
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: 'audio/webm;codecs=opus',
         });
+        console.log('[Renderer] MediaRecorder created, state:', mediaRecorder.state);
 
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -169,9 +241,20 @@ export default function App() {
           }
         };
 
+        mediaRecorder.onerror = (event) => {
+          console.error('[Dictate] MediaRecorder error:', event);
+          // Reset stream on error
+          globalStream = null;
+          permissionRequested = false;
+          cleanupRecording();
+          setError('録音中にエラーが発生しました');
+        };
+
         mediaRecorderRef.current = mediaRecorder;
+        console.log('[Renderer] Starting MediaRecorder with 100ms timeslice...');
         mediaRecorder.start(100);
-        console.log('Recording started');
+        console.log('[Renderer] MediaRecorder started, state:', mediaRecorder.state);
+        console.log('[Renderer] ====== Recording started successfully ======');
       } catch (error) {
         console.error('Failed to start audio capture:', error);
         setError('マイクへのアクセスに失敗しました');
@@ -179,45 +262,73 @@ export default function App() {
     });
 
     const unsubscribeStopCapture = window.electronAPI.onStopAudioCapture(async () => {
-      console.log('Stop capture received, max audio level:', maxAudioLevelRef.current);
+      console.log('[Renderer] ====== onStopAudioCapture received ======');
+      console.log('[Renderer] max audio level:', maxAudioLevelRef.current);
+      console.log('[Renderer] globalStream:', globalStream);
+      console.log('[Renderer] globalStream active:', globalStream?.active);
+      console.log('[Renderer] mediaRecorderRef:', mediaRecorderRef.current);
+      console.log('[Renderer] mediaRecorderRef state:', mediaRecorderRef.current?.state);
 
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
 
-      console.log('Max audio level during recording:', maxAudioLevelRef.current);
+      console.log('[Renderer] Max audio level during recording:', maxAudioLevelRef.current);
 
       // If no active recorder, send empty data to prevent timeout
       if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
-        console.log('No active recorder, sending empty audio data');
+        console.log('[Renderer] No active recorder, sending empty audio data');
+        console.log('[Renderer] mediaRecorderRef.current:', mediaRecorderRef.current);
+        console.log('[Renderer] state:', mediaRecorderRef.current?.state);
         window.electronAPI.sendAudioData(new ArrayBuffer(0));
         return;
       }
 
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         const recorder = mediaRecorderRef.current;
+        console.log('[Renderer] Recorder state before stop:', recorder.state);
 
         recorder.onstop = async () => {
-          console.log('MediaRecorder stopped, chunks:', audioChunksRef.current.length);
-          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-          console.log('Audio blob size:', audioBlob.size);
-          const arrayBuffer = await audioBlob.arrayBuffer();
-          window.electronAPI.sendAudioData(arrayBuffer);
-
-          // Cleanup - but keep the stream alive for reuse
-          if (audioContextRef.current) {
-            audioContextRef.current.close();
-            audioContextRef.current = null;
+          console.log('[Renderer] ====== recorder.onstop fired ======');
+          try {
+            console.log('[Renderer] MediaRecorder stopped, chunks:', audioChunksRef.current.length);
+            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            console.log('[Renderer] Audio blob size:', audioBlob.size);
+            const arrayBuffer = await audioBlob.arrayBuffer();
+            console.log('[Renderer] Sending audio data to main process, size:', arrayBuffer.byteLength);
+            window.electronAPI.sendAudioData(arrayBuffer);
+            console.log('[Renderer] Audio data sent!');
+          } catch (error) {
+            console.error('[Renderer] Error in onstop handler:', error);
+            window.electronAPI.sendAudioData(new ArrayBuffer(0));
+          } finally {
+            // Cleanup - but keep the stream alive for reuse
+            if (audioContextRef.current) {
+              try {
+                audioContextRef.current.close();
+              } catch {
+                // Ignore close errors
+              }
+              audioContextRef.current = null;
+            }
+            mediaRecorderRef.current = null;
+            analyserRef.current = null;
+            audioChunksRef.current = [];
+            maxAudioLevelRef.current = 0;
+            setAudioLevels(Array(7).fill(0.2));
+            console.log('[Renderer] Cleanup complete');
           }
-          mediaRecorderRef.current = null;
-          analyserRef.current = null;
-          audioChunksRef.current = [];
-          maxAudioLevelRef.current = 0;
-          setAudioLevels(Array(7).fill(0.2));
         };
 
-        recorder.stop();
+        try {
+          console.log('[Renderer] Calling recorder.stop()...');
+          recorder.stop();
+          console.log('[Renderer] recorder.stop() called, state now:', recorder.state);
+        } catch (error) {
+          console.error('[Renderer] Error stopping recorder:', error);
+          window.electronAPI.sendAudioData(new ArrayBuffer(0));
+        }
       }
     });
 

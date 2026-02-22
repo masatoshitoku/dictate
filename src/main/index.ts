@@ -11,6 +11,7 @@ import { shortcutManager, setupShortcuts } from './shortcuts';
 import { audioRecorder } from './services/audio-recorder';
 import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
+import { historyService } from './services/history';
 import { setupAutoUpdater } from './services/updater';
 import { typeText, checkAccessibilityPermission } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
@@ -83,8 +84,9 @@ function getDefaultWebPreferences(): Electron.WebPreferences {
     preload: preloadPath,
     contextIsolation: true,
     nodeIntegration: false,
-    sandbox: true,  // Additional security layer
+    sandbox: false,  // Disabled for MediaDevices API stability
     webSecurity: true,  // Enforce same-origin policy
+    backgroundThrottling: false,  // Keep renderer active when window is hidden
   };
 }
 
@@ -157,9 +159,15 @@ function createWindow(): void {
 
   loadWindowURL(mainWindow);
 
+  // Open DevTools in development for debugging
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+
   mainWindow.on('close', (event) => {
     if (!appIsQuitting) {
       event.preventDefault();
+
       mainWindow?.hide();
     }
   });
@@ -176,6 +184,7 @@ function createWindow(): void {
       // Tell renderer to cancel/cleanup its recording state
       mainWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
       mainWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
+
       mainWindow.hide();
     }
   });
@@ -270,21 +279,47 @@ async function startRecording(): Promise<void> {
 /**
  * Process transcription result and type text
  */
+// Remove unnecessary spaces from Japanese text
+function removeJapaneseSpaces(text: string): string {
+  // Japanese character ranges
+  const japanesePattern = /[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF]/;
+
+  let result = text;
+  let prev = '';
+
+  // Repeat until no more changes (handles consecutive spaces)
+  while (result !== prev) {
+    prev = result;
+    // Remove spaces between Japanese characters
+    result = result.replace(/([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g, '$1$2');
+    // Remove spaces between Japanese and ASCII
+    result = result.replace(/([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([a-zA-Z0-9])/g, '$1$2');
+    result = result.replace(/([a-zA-Z0-9])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g, '$1$2');
+  }
+
+  // Also convert full-width spaces to nothing when between Japanese
+  result = result.replace(/\u3000/g, '');
+
+  return result;
+}
+
 async function processTranscription(transcribedText: string): Promise<void> {
   if (!transcribedText || transcribedText.length === 0) {
     debugLog('No text to type');
     return;
   }
 
-  debugLog(`About to type: "${transcribedText}"`);
+  // Remove unnecessary spaces from Japanese text
+  const formattedText = removeJapaneseSpaces(transcribedText);
+  debugLog(`About to type: "${formattedText}"`);
 
   // Wait for window to fully hide before typing
   await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
 
   // Type the text
   const settings = store.get('settings');
-  await typeText(transcribedText, { speed: settings.typingSpeed });
-  debugLog(`Typing completed for: "${transcribedText}"`);
+  await typeText(formattedText, { speed: settings.typingSpeed });
+  debugLog(`Typing completed for: "${formattedText}"`);
 }
 
 async function stopRecording(): Promise<void> {
@@ -312,6 +347,7 @@ async function stopRecording(): Promise<void> {
       // Skip if audio is too short (likely no real speech)
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
         debugLog('Audio too short, skipping transcription');
+  
         window.hide();
         return;
       }
@@ -323,6 +359,7 @@ async function stopRecording(): Promise<void> {
       debugLog(`Transcription completed: "${transcribedText}"`);
 
       // Hide window before typing
+
       window.hide();
 
       // Skip if no speech detected
@@ -330,6 +367,11 @@ async function stopRecording(): Promise<void> {
         debugLog('No speech detected, skipping');
         return;
       }
+
+      // Save to history
+      const formattedText = removeJapaneseSpaces(transcribedText);
+      historyService.add(transcribedText, formattedText);
+      debugLog(`History saved: "${formattedText}"`);
 
       // Process and type the transcription
       await processTranscription(transcribedText);
@@ -341,6 +383,7 @@ async function stopRecording(): Promise<void> {
       // Show error to user
       notifyError(window, `Transcription failed: ${message}`);
       window.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'error');
+
       window.hide();
     } finally {
       isRecording = false;
@@ -371,6 +414,7 @@ async function cancelRecording(): Promise<void> {
   }
 
   window.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
+
   window.hide();
 }
 
@@ -522,6 +566,44 @@ function setupIPC(): void {
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`Failed to delete dictionary entry: ${message}`);
+    }
+  });
+
+  // History
+  ipcMain.handle(IPC_CHANNELS.GET_HISTORY, () => {
+    try {
+      return historyService.getAll();
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to get history: ${message}`);
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_HISTORY, (_event, query: string) => {
+    try {
+      return historyService.search(query);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to search history: ${message}`);
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DELETE_HISTORY_ENTRY, (_event, id: string) => {
+    try {
+      return historyService.delete(id);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to delete history entry: ${message}`);
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.DELETE_ALL_HISTORY, () => {
+    try {
+      historyService.deleteAll();
+      return true;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`Failed to delete all history: ${message}`);
     }
   });
 

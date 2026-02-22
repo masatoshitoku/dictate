@@ -30,6 +30,12 @@ const IPC_CHANNELS = {
   UPDATE_DICTIONARY_ENTRY: 'update-dictionary-entry',
   DELETE_DICTIONARY_ENTRY: 'delete-dictionary-entry',
 
+  // History
+  GET_HISTORY: 'get-history',
+  SEARCH_HISTORY: 'search-history',
+  DELETE_HISTORY_ENTRY: 'delete-history-entry',
+  DELETE_ALL_HISTORY: 'delete-all-history',
+
   // Window
   OPEN_SETTINGS: 'open-settings',
   CLOSE_SETTINGS: 'close-settings',
@@ -79,6 +85,13 @@ interface DictionaryEntry {
   usageCount: number;
 }
 
+interface TranscriptionHistoryEntry {
+  id: string;
+  originalText: string;
+  formattedText: string;
+  createdAt: number;
+}
+
 interface ApiKeyValidationResult {
   valid: boolean;
   error?: string;
@@ -121,6 +134,12 @@ export interface ElectronAPI {
   addDictionaryEntry: (reading: string, word: string, category?: 'auto' | 'manual') => Promise<DictionaryEntry>;
   updateDictionaryEntry: (id: string, updates: { reading?: string; word?: string }) => Promise<DictionaryEntry | null>;
   deleteDictionaryEntry: (id: string) => Promise<boolean>;
+
+  // History
+  getHistory: () => Promise<TranscriptionHistoryEntry[]>;
+  searchHistory: (query: string) => Promise<TranscriptionHistoryEntry[]>;
+  deleteHistoryEntry: (id: string) => Promise<boolean>;
+  deleteAllHistory: () => Promise<boolean>;
 
   // Window
   openSettings: () => Promise<void>;
@@ -172,6 +191,12 @@ const electronAPI: ElectronAPI = {
   addDictionaryEntry: (reading, word, category) => ipcRenderer.invoke(IPC_CHANNELS.ADD_DICTIONARY_ENTRY, reading, word, category),
   updateDictionaryEntry: (id, updates) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DICTIONARY_ENTRY, id, updates),
   deleteDictionaryEntry: (id) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_DICTIONARY_ENTRY, id),
+
+  // History
+  getHistory: () => ipcRenderer.invoke(IPC_CHANNELS.GET_HISTORY),
+  searchHistory: (query) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_HISTORY, query),
+  deleteHistoryEntry: (id) => ipcRenderer.invoke(IPC_CHANNELS.DELETE_HISTORY_ENTRY, id),
+  deleteAllHistory: () => ipcRenderer.invoke(IPC_CHANNELS.DELETE_ALL_HISTORY),
 
   // Window
   openSettings: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SETTINGS),

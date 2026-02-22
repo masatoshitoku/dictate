@@ -22,6 +22,13 @@ export interface DictionaryEntry {
   usageCount: number;
 }
 
+export interface TranscriptionHistoryEntry {
+  id: string;
+  originalText: string;   // 元のテキスト
+  formattedText: string;  // フォーマット後のテキスト
+  createdAt: number;      // タイムスタンプ
+}
+
 export interface ShortcutSettings {
   toggleRecording: string;
   cancelRecording: string;
@@ -109,6 +116,12 @@ export const IPC_CHANNELS = {
   ADD_DICTIONARY_ENTRY: 'add-dictionary-entry',
   UPDATE_DICTIONARY_ENTRY: 'update-dictionary-entry',
   DELETE_DICTIONARY_ENTRY: 'delete-dictionary-entry',
+
+  // History
+  GET_HISTORY: 'get-history',
+  SEARCH_HISTORY: 'search-history',
+  DELETE_HISTORY_ENTRY: 'delete-history-entry',
+  DELETE_ALL_HISTORY: 'delete-all-history',
 
   // Window
   OPEN_SETTINGS: 'open-settings',
