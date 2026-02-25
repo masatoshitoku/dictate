@@ -231,12 +231,6 @@ export default function App() {
         });
         console.log('[Renderer] MediaRecorder created, state:', mediaRecorder.state);
 
-        mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) {
-            audioChunksRef.current.push(event.data);
-          }
-        };
-
         mediaRecorder.onerror = (event) => {
           console.error('[Dictate] MediaRecorder error:', event);
           // Reset stream on error
@@ -244,6 +238,17 @@ export default function App() {
           permissionRequested = false;
           cleanupRecording();
           setError('録音中にエラーが発生しました');
+        };
+
+        // Capture reference to guard against stale ondataavailable from previous session.
+        // cleanupRecording() sets mediaRecorderRef.current = null synchronously, but
+        // the final ondataavailable fires asynchronously AFTER the ref is cleared.
+        // By checking ref identity we drop any chunk from an old recorder.
+        const thisRecorder = mediaRecorder;
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0 && mediaRecorderRef.current === thisRecorder) {
+            audioChunksRef.current.push(event.data);
+          }
         };
 
         mediaRecorderRef.current = mediaRecorder;
