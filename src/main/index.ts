@@ -432,14 +432,8 @@ async function cancelRecording(): Promise<void> {
 // Tray Configuration
 // ============================================================================
 
-interface TrayConfig {
-  onToggleRecording: () => Promise<void>;
-  onShowWindow: () => void;
-  onOpenSettings: () => void;
-  onQuit: () => void;
-}
-
-function getTrayConfig(): TrayConfig {
+function getTrayConfig() {
+  const settings = store.get('settings');
   return {
     onToggleRecording: toggleRecording,
     onShowWindow: () => mainWindow?.show(),
@@ -448,6 +442,7 @@ function getTrayConfig(): TrayConfig {
       appIsQuitting = true;
       app.quit();
     },
+    currentShortcut: settings.shortcuts?.toggleRecording,
   };
 }
 

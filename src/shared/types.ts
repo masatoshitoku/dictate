@@ -56,29 +56,6 @@ export interface ApiKeyValidationResult {
   error?: string;
 }
 
-export interface IPCChannels {
-  // Main -> Renderer
-  'recording-started': () => void;
-  'recording-stopped': () => void;
-  'transcription-result': (result: TranscriptionResult) => void;
-  'status-changed': (status: RecordingState['status']) => void;
-  'error': (message: string) => void;
-
-  // Renderer -> Main
-  'start-recording': () => void;
-  'stop-recording': () => void;
-  'toggle-recording': () => void;
-  'get-settings': () => AppSettings;
-  'save-settings': (settings: Partial<AppSettings>) => void;
-
-  // API Key management
-  'save-api-key': (apiKey: string) => boolean;
-  'has-api-key': () => boolean;
-  'get-masked-api-key': () => string | null;
-  'validate-api-key': (apiKey: string) => ApiKeyValidationResult;
-  'is-encryption-available': () => boolean;
-}
-
 export const DEFAULT_SETTINGS: AppSettings = {
   hotkey: 'Alt+Space',
   recordingMode: 'toggle',

@@ -1,6 +1,7 @@
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 const MAX_LOG_SIZE_BYTES = 1024 * 1024; // 1 MB
 
@@ -44,7 +45,8 @@ function rotateIfNeeded(logFile: string): void {
 export function logCriticalError(prefix: string, error: Error | string): void {
   const message = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : error;
   const timestamp = new Date().toISOString();
-  const line = `[${timestamp}] [${prefix}] ${message}\n`;
+  const meta = `v${app.getVersion()} ${process.platform}/${process.arch} ${os.release()}`;
+  const line = `[${timestamp}] [${prefix}] [${meta}] ${message}\n`;
 
   try {
     const logDir = app.getPath('logs');

@@ -10,7 +10,11 @@ import type {
 } from '../shared/types';
 import { IPC_CHANNELS } from '../shared/types';
 
-console.log('[preload] Script starting...');
+const isDev = process.env.NODE_ENV !== 'production' && !process.env.ELECTRON_IS_PACKAGED;
+function preloadLog(msg: string): void {
+  if (isDev) { try { console.log(msg); } catch { /* EPIPE */ } }
+}
+preloadLog('[preload] Script starting...');
 
 type RecordingStatus = RecordingState['status'];
 
@@ -160,7 +164,7 @@ const electronAPI: ElectronAPI = {
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);
-console.log('[preload] electronAPI exposed to window');
+preloadLog('[preload] electronAPI exposed to window');
 
 declare global {
   interface Window {

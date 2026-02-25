@@ -1,6 +1,11 @@
 import Store from 'electron-store';
 import { DictionaryEntry } from '../../shared/types';
-import { getDictionaryPrompt as formatDictionaryPrompt } from '../../shared/dictionary-utils';
+import {
+  getDictionaryPrompt as formatDictionaryPrompt,
+  immutableUpdate,
+  immutableIncrementUsage,
+  immutableAdd,
+} from '../../shared/dictionary-utils';
 import { randomUUID } from 'crypto';
 
 interface DictionaryStore {
@@ -50,18 +55,15 @@ export class DictionaryService {
       usageCount: 0,
     };
 
-    store.set('entries', [...entries, entry]);
+    const newEntries = immutableAdd(entries, entry);
+    store.set('entries', newEntries);
     return entry;
   }
 
   update(id: string, updates: Partial<Pick<DictionaryEntry, 'reading' | 'word'>>): DictionaryEntry | null {
     const entries = this.getAll();
-    const index = entries.findIndex(e => e.id === id);
-
-    if (index === -1) return null;
-
-    const updated = { ...entries[index], ...updates };
-    const newEntries = [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
+    const { entries: newEntries, updated } = immutableUpdate(entries, id, updates);
+    if (!updated) return null;
     store.set('entries', newEntries);
     return updated;
   }
@@ -78,42 +80,9 @@ export class DictionaryService {
 
   incrementUsage(id: string): void {
     const entries = this.getAll();
-    const index = entries.findIndex(e => e.id === id);
-
-    if (index !== -1) {
-      const updated = { ...entries[index], usageCount: entries[index].usageCount + 1 };
-      const newEntries = [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
+    const newEntries = immutableIncrementUsage(entries, id);
+    if (newEntries !== entries) {
       store.set('entries', newEntries);
-    }
-  }
-
-  // Auto-detect and add special words from transcription
-  autoDetectSpecialWords(text: string): void {
-    // Detect patterns that might be names or special terms
-    const patterns = [
-      // Japanese names (カタカナ names)
-      /[ァ-ヶー]{2,}/g,
-      // English words in Japanese text
-      /[A-Z][a-z]+(?:\s[A-Z][a-z]+)*/g,
-      // Company names or product names (often have specific patterns)
-      /[A-Z]{2,}/g,
-    ];
-
-    for (const pattern of patterns) {
-      const matches = text.match(pattern);
-      if (matches) {
-        for (const match of matches) {
-          // Only add if it looks like a proper noun (starts with capital or is katakana)
-          if (match.length >= 2) {
-            // Check if already exists
-            const existing = this.getAll().find(e => e.word === match);
-            if (!existing) {
-              // For auto-detected words, reading is the same as word initially
-              this.add(match.toLowerCase(), match, 'auto');
-            }
-          }
-        }
-      }
     }
   }
 

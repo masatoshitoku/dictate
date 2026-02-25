@@ -15,6 +15,8 @@ import {
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1000;
+const CIRCUIT_BREAKER_THRESHOLD = 5;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 60_000; // 1 minute
 
 const GEMINI_SYSTEM_PROMPT = `あなたは音声を文字起こしするアシスタントです。
 
@@ -59,13 +61,7 @@ interface GeminiServiceConfig {
   model?: string;
 }
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+import { sleep } from '../../shared/sleep';
 
 // ============================================================================
 // GeminiService Class
@@ -75,6 +71,8 @@ export class GeminiService {
   private genAI: GoogleGenerativeAI;
   private modelName: string;
   private cachedModel: ReturnType<GoogleGenerativeAI['getGenerativeModel']> | null = null;
+  private consecutiveFailures = 0;
+  private circuitOpenUntil = 0;
 
   constructor(config: GeminiServiceConfig) {
     this.genAI = new GoogleGenerativeAI(config.apiKey);
@@ -121,16 +119,31 @@ export class GeminiService {
     mimeType: string = 'audio/wav',
     dictionaryPrompt: string = ''
   ): Promise<string> {
+    // Circuit breaker: reject immediately if too many consecutive failures
+    if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD && Date.now() < this.circuitOpenUntil) {
+      throw createTranscriptionError(
+        'Gemini API temporarily unavailable. Please try again in a moment.',
+        'CIRCUIT_OPEN',
+        false
+      );
+    }
+
     let lastError: TranscriptionError | null = null;
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await this.doTranscription(audioBuffer, mimeType, dictionaryPrompt);
+        const result = await this.doTranscription(audioBuffer, mimeType, dictionaryPrompt);
+        this.consecutiveFailures = 0; // Reset on success
+        return result;
       } catch (error: unknown) {
         lastError = parseGeminiError(error);
 
         // Don't retry non-retryable errors
         if (!lastError.isRetryable) {
+          this.consecutiveFailures++;
+          if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+            this.circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+          }
           throw lastError;
         }
 
@@ -142,7 +155,12 @@ export class GeminiService {
       }
     }
 
-    // All retries exhausted — log to persistent file so production failures are visible
+    // All retries exhausted
+    this.consecutiveFailures++;
+    if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+      this.circuitOpenUntil = Date.now() + CIRCUIT_BREAKER_COOLDOWN_MS;
+    }
+
     const finalError = lastError || createTranscriptionError('Transcription failed after all retries', 'MAX_RETRIES', false);
     logCriticalError('gemini', finalError);
     throw finalError;

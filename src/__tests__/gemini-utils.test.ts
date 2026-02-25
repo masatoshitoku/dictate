@@ -155,9 +155,29 @@ describe('parseGeminiError', () => {
     expect(err.code).toBe('UNKNOWN_ERROR');
   });
 
-  // Priority testing: network takes precedence over other patterns
-  it('prioritizes network error over other patterns', () => {
+  // Priority testing: patterns are checked in order (network > quota > api_key > safety)
+  it('prioritizes network error over API key pattern', () => {
     const err = parseGeminiError(new Error('ENOTFOUND API key invalid'));
     expect(err.code).toBe('NETWORK_ERROR');
+  });
+
+  it('prioritizes network error over quota pattern', () => {
+    const err = parseGeminiError(new Error('ETIMEDOUT quota exceeded'));
+    expect(err.code).toBe('NETWORK_ERROR');
+  });
+
+  it('prioritizes quota error over API key pattern', () => {
+    const err = parseGeminiError(new Error('quota limit API key invalid'));
+    expect(err.code).toBe('RATE_LIMIT');
+  });
+
+  it('prioritizes quota error over safety pattern', () => {
+    const err = parseGeminiError(new Error('429 SAFETY blocked'));
+    expect(err.code).toBe('RATE_LIMIT');
+  });
+
+  it('prioritizes API key error over safety pattern', () => {
+    const err = parseGeminiError(new Error('401 SAFETY issue'));
+    expect(err.code).toBe('INVALID_API_KEY');
   });
 });

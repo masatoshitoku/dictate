@@ -2,6 +2,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { clipboard } from 'electron';
 import { escapeAppleScript, requiresClipboardForText } from '../shared/string-utils';
+import { sleep } from '../shared/sleep';
 import { createLogger } from './utils/logger';
 
 const execFileAsync = promisify(execFile);
@@ -56,10 +57,6 @@ async function typeChunk(text: string): Promise<void> {
     debugLog(`AppleScript error: ${message}`);
     throw new Error('Failed to type text. Please check accessibility permissions.');
   }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 /**

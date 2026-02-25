@@ -6,6 +6,7 @@ interface TrayManagerConfig {
   onShowWindow: () => void;
   onOpenSettings: () => void;
   onQuit: () => void;
+  currentShortcut?: string;
 }
 
 class TrayManager {
@@ -17,7 +18,7 @@ class TrayManager {
     const icon = nativeImage.createFromPath(iconPath);
 
     this.tray = new Tray(icon.resize({ width: 18, height: 18 }));
-    this.tray.setToolTip('Typeless Clone - Voice Dictation');
+    this.tray.setToolTip('Dictate - Voice Dictation');
 
     this.updateMenu(config);
 
@@ -44,7 +45,7 @@ class TrayManager {
       {
         label: this.isRecording ? 'Stop Recording' : 'Start Recording',
         click: config.onToggleRecording,
-        accelerator: 'Alt+Space',
+        accelerator: config.currentShortcut || 'Alt+Space',
       },
       { type: 'separator' },
       {
@@ -74,8 +75,8 @@ class TrayManager {
     if (this.tray) {
       this.tray.setToolTip(
         isRecording
-          ? 'Typeless Clone - Recording...'
-          : 'Typeless Clone - Voice Dictation'
+          ? 'Dictate - Recording...'
+          : 'Dictate - Voice Dictation'
       );
     }
   }

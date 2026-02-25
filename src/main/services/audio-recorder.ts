@@ -22,7 +22,7 @@ export class AudioRecorder {
   private currentRecordingId = 0; // Unique ID for each recording session
 
   constructor() {
-    this.tempDir = path.join(os.tmpdir(), 'typeless-clone');
+    this.tempDir = path.join(os.tmpdir(), 'dictate');
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir, { recursive: true });
     }
@@ -128,16 +128,6 @@ export class AudioRecorder {
 
   getIsRecording(): boolean {
     return this.isRecording;
-  }
-
-  getTempFilePath(): string {
-    return path.join(this.tempDir, `recording-${Date.now()}.wav`);
-  }
-
-  async saveToFile(audioBuffer: Buffer, filePath?: string): Promise<string> {
-    const outputPath = filePath || this.getTempFilePath();
-    fs.writeFileSync(outputPath, audioBuffer);
-    return outputPath;
   }
 
   cleanup(): void {

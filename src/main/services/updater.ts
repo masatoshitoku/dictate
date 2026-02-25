@@ -1,7 +1,7 @@
 import { autoUpdater } from 'electron-updater';
 import { app, dialog, net } from 'electron';
 import Store from 'electron-store';
-import { createLogger } from '../utils/logger';
+import { createLogger, logCriticalError } from '../utils/logger';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const STARTUP_DELAY_MS = 10000; // 10 seconds
@@ -12,6 +12,7 @@ const store = new Store<{ lastUpdateCheck: number }>({
 });
 
 const debugLog = createLogger('updater');
+let listenersRegistered = false;
 
 export function setupAutoUpdater(): void {
   if (!app.isPackaged) {
@@ -19,30 +20,28 @@ export function setupAutoUpdater(): void {
     return;
   }
 
+  registerListeners();
+
   // Delay startup check
   setTimeout(() => {
     checkForUpdatesIfNeeded();
   }, STARTUP_DELAY_MS);
+
+  // Periodic re-check for long-running instances
+  setInterval(() => {
+    checkForUpdatesIfNeeded();
+  }, CHECK_INTERVAL_MS);
 }
 
-function checkForUpdatesIfNeeded(): void {
-  // Check network connectivity
-  if (!net.isOnline()) {
-    debugLog('Offline, skipping update check');
-    return;
-  }
+function registerListeners(): void {
+  if (listenersRegistered) return;
+  listenersRegistered = true;
 
-  // Skip if checked recently
-  const lastCheck = store.get('lastUpdateCheck');
-  if (Date.now() - lastCheck < CHECK_INTERVAL_MS) {
-    debugLog('Checked recently, skipping');
-    return;
-  }
-
-  autoUpdater.autoDownload = false; // User confirmation before download
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   autoUpdater.on('update-available', (info) => {
+    store.set('lastUpdateCheck', Date.now());
     dialog.showMessageBox({
       type: 'info',
       title: 'Update Available',
@@ -56,14 +55,15 @@ function checkForUpdatesIfNeeded(): void {
   });
 
   autoUpdater.on('update-not-available', () => {
+    store.set('lastUpdateCheck', Date.now());
     debugLog('No update available');
   });
 
-  autoUpdater.on('update-downloaded', () => {
+  autoUpdater.on('update-downloaded', (info) => {
     dialog.showMessageBox({
       type: 'info',
       title: 'Update Ready',
-      message: 'The new version has been downloaded. It will be installed when you restart the app.',
+      message: `Version ${info.version} has been downloaded. It will be installed when you restart the app.`,
       buttons: ['Restart Now', 'Later'],
     }).then((result) => {
       if (result.response === 0) {
@@ -77,10 +77,22 @@ function checkForUpdatesIfNeeded(): void {
     if (msg.includes('net::') || msg.includes('ENOTFOUND')) {
       debugLog('Network error, will retry later');
     } else {
-      debugLog(`Auto-updater error: ${msg}`);
+      logCriticalError('updater', error);
     }
   });
+}
 
-  store.set('lastUpdateCheck', Date.now());
+function checkForUpdatesIfNeeded(): void {
+  if (!net.isOnline()) {
+    debugLog('Offline, skipping update check');
+    return;
+  }
+
+  const lastCheck = store.get('lastUpdateCheck');
+  if (Date.now() - lastCheck < CHECK_INTERVAL_MS) {
+    debugLog('Checked recently, skipping');
+    return;
+  }
+
   autoUpdater.checkForUpdatesAndNotify();
 }
