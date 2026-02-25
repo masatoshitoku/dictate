@@ -57,4 +57,29 @@ describe('removeJapaneseSpaces', () => {
   it('handles numbers adjacent to Japanese', () => {
     expect(removeJapaneseSpaces('東京 123 タワー')).toBe('東京123タワー');
   });
+
+  it('preserves newlines between Japanese characters', () => {
+    expect(removeJapaneseSpaces('東京\nタワー')).toBe('東京\nタワー');
+  });
+
+  it('preserves newlines in multi-line transcription', () => {
+    const input = '東京タワー\n大阪城\n京都寺';
+    expect(removeJapaneseSpaces(input)).toBe(input);
+  });
+
+  it('removes tabs between Japanese characters', () => {
+    expect(removeJapaneseSpaces('東京\tタワー')).toBe('東京タワー');
+  });
+
+  it('removes mixed spaces and tabs between Japanese', () => {
+    expect(removeJapaneseSpaces('東京 \t タワー')).toBe('東京タワー');
+  });
+
+  it('preserves newlines while removing spaces on same line', () => {
+    expect(removeJapaneseSpaces('東京 タワー\n大阪 城')).toBe('東京タワー\n大阪城');
+  });
+
+  it('handles fullwidth punctuation adjacent to Japanese', () => {
+    expect(removeJapaneseSpaces('東京。 タワー')).toBe('東京。タワー');
+  });
 });

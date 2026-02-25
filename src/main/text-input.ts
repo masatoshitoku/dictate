@@ -1,6 +1,7 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { app, clipboard } from 'electron';
+import { escapeAppleScript, requiresClipboardForText } from '../shared/string-utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -38,18 +39,6 @@ export async function getFrontmostApp(): Promise<string | null> {
 }
 
 /**
- * Escape text for use in AppleScript double-quoted strings
- */
-function escapeAppleScript(text: string): string {
-  return text
-    .replace(/\\/g, '\\\\')
-    .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n')
-    .replace(/\r/g, '\\r')
-    .replace(/\t/g, '\\t');
-}
-
-/**
  * Type a chunk of text using AppleScript keystroke
  * Uses execFile to avoid shell interpretation (prevents command injection)
  */
@@ -84,7 +73,7 @@ export async function typeText(text: string, options: TypeTextOptions = {}): Pro
   }
 
   // Use clipboard paste for non-ASCII characters (Japanese, emoji, etc.)
-  const requiresClipboardPaste = /[^\x20-\x7E\t\n\r]/.test(text);
+  const requiresClipboardPaste = requiresClipboardForText(text);
 
   if (requiresClipboardPaste) {
     await setClipboardAndPaste(text, options.targetApp);
@@ -151,14 +140,20 @@ export async function pasteFromClipboard(targetApp?: string): Promise<void> {
     `;
   }
 
-  console.log(`[dictate] pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
+  if (!app.isPackaged) {
+    console.log(`[dictate] pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
+  }
 
   try {
     await execFileAsync('osascript', ['-e', script]);
-    console.log('[dictate] pasteFromClipboard: success');
+    if (!app.isPackaged) {
+      console.log('[dictate] pasteFromClipboard: success');
+    }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    console.error(`[dictate] pasteFromClipboard error: ${message}`);
+    if (!app.isPackaged) {
+      console.error(`[dictate] pasteFromClipboard error: ${message}`);
+    }
     throw new Error('Failed to paste. Please check accessibility permissions.');
   }
 }

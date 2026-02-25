@@ -382,7 +382,7 @@ async function cancelRecording(): Promise<void> {
   const targetWindow = mainWindow;
   if (!targetWindow) return;
 
-  if (isRecording) {
+  if (isRecording || stopPromise) {
     // Stop the audio recorder
     try {
       await audioRecorder.stopRecording();
@@ -392,6 +392,7 @@ async function cancelRecording(): Promise<void> {
 
     targetWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
     isRecording = false;
+    stopPromise = null;
     trayManager.setRecordingState(false, getTrayConfig());
     debugLog('Recording cancelled');
   }
@@ -484,6 +485,10 @@ function setupIPC(): void {
     const result = saveApiKey(apiKey);
     if (result) {
       initGeminiService(apiKey);
+      // Create recording window if it doesn't exist yet (first-time setup)
+      if (!mainWindow) {
+        createWindow();
+      }
     }
     return result;
   });
@@ -710,6 +715,8 @@ app.whenReady().then(() => {
   initialize().catch((error: unknown) => {
     const message = error instanceof Error ? error.message : 'Unknown error';
     debugLog(`Initialization failed: ${message}`);
+    dialog.showErrorBox('Dictate - Initialization Error', `Failed to start: ${message}`);
+    app.quit();
   });
 });
 

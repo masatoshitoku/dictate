@@ -1,6 +1,7 @@
 import { safeStorage, app } from 'electron';
 import Store from 'electron-store';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { maskApiKeyString } from '../shared/string-utils';
 
 const store = new Store<{
   encryptedApiKey?: string;
@@ -111,15 +112,10 @@ export async function validateApiKey(apiKey: string): Promise<{ valid: boolean; 
 }
 
 /**
- * Get a masked version of the API key for display
+ * Get a masked version of the stored API key for display
  */
 export function getMaskedApiKey(): string | null {
   const apiKey = getApiKey();
   if (!apiKey) return null;
-
-  if (apiKey.length <= 8) {
-    return '●'.repeat(apiKey.length);
-  }
-
-  return apiKey.substring(0, 4) + '●'.repeat(apiKey.length - 8) + apiKey.substring(apiKey.length - 4);
+  return maskApiKeyString(apiKey);
 }

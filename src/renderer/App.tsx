@@ -33,6 +33,7 @@ export default function App() {
   const dataArrayRef = useRef<Uint8Array | null>(null);
   const [audioLevels, setAudioLevels] = useState<number[]>([...INITIAL_AUDIO_LEVELS]);
   const levelsBufferRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
+  const barRefsArray = useRef<(HTMLDivElement | null)[]>([]);
 
   const isRecording = status === 'recording';
   const isProcessing = status === 'processing';
@@ -145,7 +146,16 @@ export default function App() {
 
           currentAnalyser.getByteFrequencyData(dataArray);
           computeAudioLevelsInto(dataArray, BAR_COUNT, levelsBufferRef.current);
-          setAudioLevels([...levelsBufferRef.current]);
+
+          // Direct DOM update — bypasses React reconciliation at 60fps
+          const bars = barRefsArray.current;
+          for (let i = 0; i < BAR_COUNT; i++) {
+            const bar = bars[i];
+            if (bar) {
+              bar.style.height = `${computeBarHeight(levelsBufferRef.current[i], BELL_CURVE[i])}px`;
+            }
+          }
+
           animationRef.current = requestAnimationFrame(updateLevels);
         };
         updateLevels();
@@ -213,7 +223,7 @@ export default function App() {
 
     const unsubscribeCancelRecording = window.electronAPI.onCancelRecording(() => {
       cleanupRecording();
-      setStatus('idle');
+      // Status is set to 'idle' by the main process via STATUS_CHANGED IPC
     });
 
     return () => {
@@ -272,6 +282,7 @@ export default function App() {
             audioLevels.map((level, i) => (
               <div
                 key={i}
+                ref={el => { barRefsArray.current[i] = el; }}
                 className={`w-[2px] rounded-[1px] transition-[height] duration-75 ${
                   isRecording ? 'bg-gold' : 'bg-white/[0.18]'
                 }`}

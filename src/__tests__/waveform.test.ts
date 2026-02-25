@@ -127,6 +127,19 @@ describe('computeAudioLevels', () => {
     expect(levels[0]).toBe(200 / 255);
     expect(levels[9]).toBe(100 / 255);
   });
+
+  it('returns floor values for empty dataArray', () => {
+    const data = new Uint8Array(0);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels).toHaveLength(BAR_COUNT);
+    expect(levels.every(l => l === AUDIO_LEVEL_FLOOR)).toBe(true);
+  });
+
+  it('returns empty array for zero bar count', () => {
+    const data = new Uint8Array([100, 200]);
+    const levels = computeAudioLevels(data, 0);
+    expect(levels).toHaveLength(0);
+  });
 });
 
 describe('computeAudioLevelsInto', () => {
@@ -157,5 +170,12 @@ describe('computeAudioLevelsInto', () => {
     const data = new Uint8Array([128, 128, 128]);
     computeAudioLevelsInto(data, 3, out);
     expect(out.every(l => l === 128 / 255)).toBe(true);
+  });
+
+  it('handles empty dataArray by filling with floor values', () => {
+    const data = new Uint8Array(0);
+    const out = new Array(BAR_COUNT).fill(999);
+    computeAudioLevelsInto(data, BAR_COUNT, out);
+    expect(out.every(l => l === AUDIO_LEVEL_FLOOR)).toBe(true);
   });
 });
