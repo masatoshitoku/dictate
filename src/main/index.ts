@@ -97,17 +97,17 @@ function getDefaultWebPreferences(): Electron.WebPreferences {
 /**
  * Load URL based on environment (development vs production)
  */
-function loadWindowURL(window: BrowserWindow, hash?: string): void {
+function loadWindowURL(targetWindow: BrowserWindow, hash?: string): void {
   // Use Vite dev server only when explicitly in development mode
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = hash ? `${process.env.VITE_DEV_SERVER_URL}#${hash}` : process.env.VITE_DEV_SERVER_URL;
-    window.loadURL(url);
+    targetWindow.loadURL(url);
   } else {
     // __dirname is dist/main/main, renderer is at dist/renderer
     const rendererPath = path.join(__dirname, '../../renderer/index.html');
     debugLog(`Renderer path: ${rendererPath}`);
     const options = hash ? { hash } : undefined;
-    window.loadFile(rendererPath, options);
+    targetWindow.loadFile(rendererPath, options);
   }
 }
 
@@ -309,15 +309,15 @@ async function stopRecording(): Promise<void> {
   }
 
   // Capture window reference at start to avoid race condition
-  const window = mainWindow;
-  if (!isRecording || !window) {
+  const targetWindow = mainWindow;
+  if (!isRecording || !targetWindow) {
     debugLog('Not recording or no window');
     return;
   }
 
   stopPromise = (async () => {
     try {
-      window.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'processing');
+      targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
       debugLog('Stopping recording...');
       const audioBuffer = await audioRecorder.stopRecording();
@@ -325,7 +325,7 @@ async function stopRecording(): Promise<void> {
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
         debugLog('Audio too short, skipping transcription');
 
-        window.hide();
+        targetWindow.hide();
         return;
       }
 
@@ -337,7 +337,7 @@ async function stopRecording(): Promise<void> {
 
       // Hide window before typing
 
-      window.hide();
+      targetWindow.hide();
 
       // Skip if no speech detected
       if (!transcribedText || transcribedText.length === 0) {
@@ -354,7 +354,7 @@ async function stopRecording(): Promise<void> {
       if (!systemPreferences.isTrustedAccessibilityClient(false)) {
         debugLog('Accessibility permission not granted, opening System Settings');
         shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
-        notifyError(window, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
+        notifyError(targetWindow, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
         return;
       }
       await processTranscription(formattedText);
@@ -364,10 +364,10 @@ async function stopRecording(): Promise<void> {
       debugLog(`Recording error: ${message}`);
 
       // Show error to user
-      notifyError(window, `Transcription failed: ${message}`);
-      window.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'error');
+      notifyError(targetWindow, 'Transcription failed');
+      targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'error');
 
-      window.hide();
+      targetWindow.hide();
     } finally {
       isRecording = false;
       stopPromise = null;
@@ -379,8 +379,8 @@ async function stopRecording(): Promise<void> {
 }
 
 async function cancelRecording(): Promise<void> {
-  const window = mainWindow;
-  if (!window) return;
+  const targetWindow = mainWindow;
+  if (!targetWindow) return;
 
   if (isRecording) {
     // Stop the audio recorder
@@ -390,15 +390,15 @@ async function cancelRecording(): Promise<void> {
       // Ignore errors during cancel
     }
 
-    window.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
+    targetWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
     isRecording = false;
     trayManager.setRecordingState(false, getTrayConfig());
     debugLog('Recording cancelled');
   }
 
-  window.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
+  targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
 
-  window.hide();
+  targetWindow.hide();
 }
 
 // ============================================================================
@@ -432,7 +432,7 @@ function getTrayConfig(): TrayConfig {
  * Register an IPC handler with standardized error wrapping.
  * The handler receives only the user-supplied args (event is stripped).
  */
-function safeHandle(channel: string, handler: (...args: any[]) => any): void {
+function safeHandle(channel: string, handler: (...args: unknown[]) => unknown): void {
   ipcMain.handle(channel, async (_event, ...args) => {
     try {
       return await handler(...args);
@@ -692,7 +692,8 @@ app.whenReady().then(() => {
       debugLog(`setPermissionCheckHandler: ${permission} → TCC=${status}, granted=${granted}`);
       return granted;
     }
-    return true;
+    // Deny all non-media permissions by default (principle of least privilege)
+    return false;
   });
 
   // Permission request: when Chromium asks (e.g. getUserMedia), grant it.
@@ -715,7 +716,10 @@ app.whenReady().then(() => {
     }
   });
 
-  initialize();
+  initialize().catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    debugLog(`Initialization failed: ${message}`);
+  });
 });
 
 // Block DevTools keyboard shortcuts in production (but allow programmatic opening for debugging)

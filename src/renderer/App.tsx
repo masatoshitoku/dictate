@@ -5,7 +5,7 @@ import {
   BAR_COUNT,
   INITIAL_AUDIO_LEVELS,
   computeBarHeight,
-  computeAudioLevels,
+  computeAudioLevelsInto,
 } from '../shared/waveform';
 
 // ============================================================================
@@ -33,7 +33,7 @@ export default function App() {
   const animationRef = useRef<number | null>(null);
   const dataArrayRef = useRef<Uint8Array | null>(null);
   const [audioLevels, setAudioLevels] = useState<number[]>([...INITIAL_AUDIO_LEVELS]);
-  const maxAudioLevelRef = useRef<number>(0);
+  const levelsBufferRef = useRef<number[]>(new Array(BAR_COUNT).fill(0));
 
   const isRecording = status === 'recording';
   const isProcessing = status === 'processing';
@@ -45,7 +45,6 @@ export default function App() {
     dataArrayRef.current = null;
     mediaRecorderRef.current = null;
     currentSessionChunksRef.current = [];
-    maxAudioLevelRef.current = 0;
     setAudioLevels([...INITIAL_AUDIO_LEVELS]);
   }, []);
 
@@ -142,20 +141,15 @@ export default function App() {
 
         dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
 
-        // rAF loop — uses computeAudioLevels (no per-frame allocation)
+        // rAF loop — self-terminates when refs are nulled by cleanup
         const updateLevels = () => {
           const currentAnalyser = analyserRef.current;
           const dataArray = dataArrayRef.current;
-          if (currentAnalyser && dataArray) {
-            currentAnalyser.getByteFrequencyData(dataArray);
+          if (!currentAnalyser || !dataArray) return;
 
-            const avgLevel = dataArray.reduce((a, b) => a + b, 0) / dataArray.length / 255;
-            if (avgLevel > maxAudioLevelRef.current) {
-              maxAudioLevelRef.current = avgLevel;
-            }
-
-            setAudioLevels(computeAudioLevels(dataArray, BAR_COUNT));
-          }
+          currentAnalyser.getByteFrequencyData(dataArray);
+          computeAudioLevelsInto(dataArray, BAR_COUNT, levelsBufferRef.current);
+          setAudioLevels([...levelsBufferRef.current]);
           animationRef.current = requestAnimationFrame(updateLevels);
         };
         updateLevels();
@@ -178,7 +172,8 @@ export default function App() {
         mediaRecorderRef.current = mediaRecorder;
         mediaRecorder.start();
       } catch (error) {
-        console.error('Failed to start audio capture:', error);
+        console.error('[Dictate] Failed to start audio capture:', error);
+        cleanupRecording();
         setError('マイクへのアクセスに失敗しました');
       }
     });

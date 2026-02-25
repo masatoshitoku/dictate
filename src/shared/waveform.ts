@@ -39,3 +39,14 @@ export function computeAudioLevels(dataArray: Uint8Array, barCount: number): num
   }
   return levels;
 }
+
+/**
+ * Compute audio levels in-place into a pre-allocated output array.
+ * Avoids per-frame allocation in rAF hot paths.
+ */
+export function computeAudioLevelsInto(dataArray: Uint8Array, barCount: number, out: number[]): void {
+  for (let i = 0; i < barCount; i++) {
+    const idx = Math.floor((i / barCount) * dataArray.length);
+    out[i] = Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
+  }
+}
