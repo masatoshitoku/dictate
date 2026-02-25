@@ -13,7 +13,7 @@ import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
 import { historyService } from './services/history';
 import { setupAutoUpdater } from './services/updater';
-import { typeText, checkAccessibilityPermission } from './text-input';
+import { typeText, getFrontmostApp, checkAccessibilityPermission } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
 import {
   getApiKey,
@@ -57,6 +57,7 @@ let settingsWindow: BrowserWindow | null = null;
 let isRecording = false;
 let appIsQuitting = false;
 let stopPromise: Promise<void> | null = null;
+let previousFrontApp: string | null = null; // App that was active before recording started
 
 // ============================================================================
 // Shared Utilities
@@ -250,6 +251,11 @@ async function toggleRecording(): Promise<void> {
     }
     lastStartTime = now;
 
+    // Capture the frontmost app BEFORE showing the Dictate window,
+    // so we can restore focus to it when pasting the transcription.
+    previousFrontApp = await getFrontmostApp();
+    debugLog(`Previous front app: ${previousFrontApp}`);
+
     // Ensure window is visible on all workspaces before showing
     mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     mainWindow.setAlwaysOnTop(true, 'floating');
@@ -316,9 +322,9 @@ async function processTranscription(transcribedText: string): Promise<void> {
   // Wait for window to fully hide before typing
   await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
 
-  // Type the text
+  // Type the text, restoring focus to the app that was active before recording
   const settings = store.get('settings');
-  await typeText(formattedText, { speed: settings.typingSpeed });
+  await typeText(formattedText, { speed: settings.typingSpeed, targetApp: previousFrontApp ?? undefined });
   debugLog(`Typing completed for: "${formattedText}"`);
 }
 
@@ -852,23 +858,36 @@ async function initialize(): Promise<void> {
 // ============================================================================
 
 app.whenReady().then(() => {
-  // Set up permission handler to auto-grant media permissions
-  // This prevents the infinite permission dialog loop
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    const allowedPermissions = ['media', 'mediaKeySystem', 'microphone'];
-    if (allowedPermissions.includes(permission)) {
-      debugLog(`Auto-granting permission: ${permission}`);
-      callback(true);
-    } else {
-      debugLog(`Permission requested: ${permission}`);
-      callback(true); // Allow other permissions too for now
+  // Permission check: reflect actual macOS TCC status so Chromium doesn't
+  // bypass TCC by assuming permission is already granted.
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+    if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
+      const status = systemPreferences.getMediaAccessStatus('microphone');
+      const granted = status === 'granted';
+      debugLog(`setPermissionCheckHandler: ${permission} → TCC=${status}, granted=${granted}`);
+      return granted;
     }
+    return true;
   });
 
-  // Also handle permission checks
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
-    const allowedPermissions = ['media', 'mediaKeySystem', 'microphone'];
-    return allowedPermissions.includes(permission);
+  // Permission request: when Chromium asks (e.g. getUserMedia), trigger macOS TCC dialog.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
+      const status = systemPreferences.getMediaAccessStatus('microphone');
+      debugLog(`setPermissionRequestHandler: ${permission} → TCC=${status}`);
+      if (status === 'granted') {
+        callback(true);
+      } else {
+        // Trigger macOS TCC dialog. On macOS 26+ this may return false immediately
+        // while the dialog is still shown asynchronously.
+        systemPreferences.askForMediaAccess('microphone').then(granted => {
+          debugLog(`askForMediaAccess resolved: ${granted}`);
+          callback(granted);
+        });
+      }
+    } else {
+      callback(true);
+    }
   });
 
   initialize();

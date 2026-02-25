@@ -19,6 +19,22 @@ export type TypingSpeed = 'instant' | 'fast' | 'natural';
 interface TypeTextOptions {
   speed?: TypingSpeed;
   chunkSize?: number;
+  targetApp?: string;
+}
+
+/**
+ * Get the name of the currently frontmost application
+ */
+export async function getFrontmostApp(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync('osascript', [
+      '-e',
+      'tell application "System Events" to return name of first application process whose frontmost is true',
+    ]);
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -71,7 +87,7 @@ export async function typeText(text: string, options: TypeTextOptions = {}): Pro
   const requiresClipboardPaste = /[^\x20-\x7E\t\n\r]/.test(text);
 
   if (requiresClipboardPaste) {
-    await setClipboardAndPaste(text);
+    await setClipboardAndPaste(text, options.targetApp);
     return;
   }
 
@@ -105,19 +121,22 @@ export async function typeText(text: string, options: TypeTextOptions = {}): Pro
 }
 
 /**
- * Paste from clipboard using Cmd+V via AppleScript
- * Uses execFile to prevent command injection
+ * Paste from clipboard using Cmd+V via AppleScript.
+ * If targetApp is provided, activates that app first to ensure the paste
+ * goes to the correct window (not the Dictate app itself).
  */
-export async function pasteFromClipboard(): Promise<void> {
+export async function pasteFromClipboard(targetApp?: string): Promise<void> {
+  const activatePart = targetApp
+    ? `tell application "${targetApp}" to activate\n    delay 0.2\n    `
+    : `delay 0.1\n    `;
+
   const script = `
-    delay 0.1
-    tell application "System Events"
+    ${activatePart}tell application "System Events"
       keystroke "v" using command down
     end tell
   `;
 
   try {
-    // Use execFile instead of exec to prevent shell injection
     await execFileAsync('osascript', ['-e', script]);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -132,13 +151,13 @@ export async function pasteFromClipboard(): Promise<void> {
  * Set clipboard content and paste using Cmd+V
  * Uses Electron clipboard API (secure, no shell injection)
  */
-export async function setClipboardAndPaste(text: string): Promise<void> {
+export async function setClipboardAndPaste(text: string, targetApp?: string): Promise<void> {
   try {
     // Use Electron's clipboard API - secure, no shell injection
     clipboard.writeText(text);
 
     await sleep(PASTE_DELAY_MS);
-    await pasteFromClipboard();
+    await pasteFromClipboard(targetApp);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     throw new Error(`Failed to set clipboard content: ${message}`);
