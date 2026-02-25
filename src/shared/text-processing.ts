@@ -14,16 +14,20 @@ const FULLWIDTH_SPACE = /\u3000/g;
  * - Spaces between Japanese and ASCII characters
  * - Full-width spaces (ideographic space U+3000)
  */
+const MAX_ITERATIONS = 100;
+
 export function removeJapaneseSpaces(text: string): string {
   let result = text;
   let prev = '';
+  let iterations = 0;
 
   // Repeat until no more changes (handles consecutive spaces)
-  while (result !== prev) {
+  while (result !== prev && iterations < MAX_ITERATIONS) {
     prev = result;
     result = result.replace(JP_TO_JP_SPACE, '$1$2');
     result = result.replace(JP_TO_ASCII_SPACE, '$1$2');
     result = result.replace(ASCII_TO_JP_SPACE, '$1$2');
+    iterations++;
   }
 
   result = result.replace(FULLWIDTH_SPACE, '');

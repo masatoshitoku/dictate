@@ -9,6 +9,7 @@ import {
   WAVEFORM_MIN_HEIGHT_SCALE,
   computeBarHeight,
   computeAudioLevels,
+  computeAudioLevelsInto,
 } from '../shared/waveform';
 
 describe('waveform constants', () => {
@@ -65,6 +66,10 @@ describe('computeBarHeight', () => {
     const h2 = computeBarHeight(1.0, 1.0);
     expect(h2).toBeCloseTo(h1 * 2, 5);
   });
+
+  it('returns zero when both level and bellWeight are zero', () => {
+    expect(computeBarHeight(0, 0)).toBe(0);
+  });
 });
 
 describe('computeAudioLevels', () => {
@@ -98,5 +103,59 @@ describe('computeAudioLevels', () => {
     const data = new Uint8Array(8).fill(200);
     const levels = computeAudioLevels(data, 5);
     expect(levels).toHaveLength(5);
+  });
+
+  it('maps indices correctly for non-uniform data', () => {
+    // 4 bins → 2 bars: bar 0 maps to idx 0, bar 1 maps to idx 2
+    const data = new Uint8Array([255, 0, 128, 0]);
+    const levels = computeAudioLevels(data, 2);
+    expect(levels[0]).toBe(1.0); // 255/255
+    expect(levels[1]).toBe(128 / 255); // 128/255
+  });
+
+  it('all values respect floor regardless of data', () => {
+    const data = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const levels = computeAudioLevels(data, 4);
+    expect(levels.every(l => l >= AUDIO_LEVEL_FLOOR)).toBe(true);
+  });
+
+  it('handles more bars than data bins', () => {
+    const data = new Uint8Array([200, 100]);
+    const levels = computeAudioLevels(data, 10);
+    expect(levels).toHaveLength(10);
+    // First 5 bars should map to idx 0 (200), rest to idx 1 (100)
+    expect(levels[0]).toBe(200 / 255);
+    expect(levels[9]).toBe(100 / 255);
+  });
+});
+
+describe('computeAudioLevelsInto', () => {
+  it('writes results into pre-allocated output array', () => {
+    const data = new Uint8Array(16).fill(200);
+    const out = new Array(BAR_COUNT).fill(0);
+    computeAudioLevelsInto(data, BAR_COUNT, out);
+    expect(out.every(l => l === 200 / 255)).toBe(true);
+  });
+
+  it('produces same results as computeAudioLevels', () => {
+    const data = new Uint8Array([100, 150, 200, 128, 64, 32, 80, 120]);
+    const allocated = computeAudioLevels(data, BAR_COUNT);
+    const out = new Array(BAR_COUNT).fill(0);
+    computeAudioLevelsInto(data, BAR_COUNT, out);
+    expect(out).toEqual(allocated);
+  });
+
+  it('applies floor to silent data', () => {
+    const data = new Uint8Array(8).fill(0);
+    const out = new Array(4).fill(0);
+    computeAudioLevelsInto(data, 4, out);
+    expect(out.every(l => l === AUDIO_LEVEL_FLOOR)).toBe(true);
+  });
+
+  it('overwrites previous values in output array', () => {
+    const out = [999, 999, 999];
+    const data = new Uint8Array([128, 128, 128]);
+    computeAudioLevelsInto(data, 3, out);
+    expect(out.every(l => l === 128 / 255)).toBe(true);
   });
 });

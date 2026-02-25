@@ -432,7 +432,8 @@ function getTrayConfig(): TrayConfig {
  * Register an IPC handler with standardized error wrapping.
  * The handler receives only the user-supplied args (event is stripped).
  */
-function safeHandle(channel: string, handler: (...args: unknown[]) => unknown): void {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- IPC args are untyped at the process boundary
+function safeHandle(channel: string, handler: (...args: any[]) => unknown): void {
   ipcMain.handle(channel, async (_event, ...args) => {
     try {
       return await handler(...args);
@@ -542,8 +543,6 @@ function setupIPC(): void {
 // Permission Checks
 // ============================================================================
 
-let microphonePermissionGranted = false;
-let microphonePermissionChecked = false;
 // Flag to ensure we only call askForMediaAccess() once (prevents infinite dialog loop)
 let hasRequestedMicPermission = false;
 
@@ -552,14 +551,10 @@ async function requestMicrophonePermission(): Promise<boolean> {
   debugLog(`Microphone permission status: ${status}`);
 
   if (status === 'granted') {
-    microphonePermissionGranted = true;
-    microphonePermissionChecked = true;
     return true;
   }
 
   if (status === 'denied') {
-    microphonePermissionGranted = false;
-    microphonePermissionChecked = true;
     return false;
   }
 
@@ -586,8 +581,6 @@ async function requestMicrophonePermission(): Promise<boolean> {
     debugLog(`TCC status after askForMediaAccess: ${newStatus}`);
 
     if (result || (newStatus as string) === 'granted') {
-      microphonePermissionGranted = true;
-      microphonePermissionChecked = true;
       // Hide the window again after permission granted
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.hide();
@@ -603,8 +596,6 @@ async function requestMicrophonePermission(): Promise<boolean> {
     }
   }
 
-  microphonePermissionGranted = false;
-  microphonePermissionChecked = true;
   return false;
 }
 
@@ -681,7 +672,7 @@ async function initialize(): Promise<void> {
 app.whenReady().then(() => {
   // Permission check: reflect actual macOS TCC status so Chromium doesn't
   // bypass TCC by assuming permission is already granted.
-  session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
       const status = systemPreferences.getMediaAccessStatus('microphone');
       // macOS 26 Tahoe beta bug: getMediaAccessStatus() returns 'not-determined'
@@ -699,7 +690,7 @@ app.whenReady().then(() => {
   // Permission request: when Chromium asks (e.g. getUserMedia), grant it.
   // The actual TCC dialog is handled by requestMicrophonePermission() at startup.
   // Here we just ensure Chromium doesn't block the audio stream.
-  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
       const status = systemPreferences.getMediaAccessStatus('microphone');
       debugLog(`setPermissionRequestHandler: ${permission} → TCC=${status}`);

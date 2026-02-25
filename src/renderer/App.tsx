@@ -14,7 +14,6 @@ import {
 
 let globalStream: MediaStream | null = null;
 let streamInitPromise: Promise<MediaStream | null> | null = null;
-let permissionRequested = false;
 
 /**
  * Close an AudioContext safely, ignoring errors if already closed.
@@ -69,12 +68,10 @@ export default function App() {
       const allTracksLive = tracks.length > 0 && tracks.every(track => track.readyState === 'live');
       if (allTracksLive) return globalStream;
       globalStream = null;
-      permissionRequested = false;
     }
 
     if (globalStream && !globalStream.active) {
       globalStream = null;
-      permissionRequested = false;
     }
 
     if (streamInitPromise) return streamInitPromise;
@@ -85,7 +82,6 @@ export default function App() {
       return null;
     }
 
-    permissionRequested = true;
     streamInitPromise = (async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -93,7 +89,7 @@ export default function App() {
         });
         globalStream = stream;
         stream.getAudioTracks().forEach(track => {
-          track.onended = () => { globalStream = null; permissionRequested = false; };
+          track.onended = () => { globalStream = null; };
         });
         return stream;
       } catch (error) {
@@ -158,7 +154,6 @@ export default function App() {
 
         mediaRecorder.onerror = () => {
           globalStream = null;
-          permissionRequested = false;
           cleanupRecording();
           setError('録音中にエラーが発生しました');
         };
