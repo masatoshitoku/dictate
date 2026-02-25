@@ -138,6 +138,7 @@ function parseGeminiError(error: unknown): TranscriptionError {
 export class GeminiService {
   private genAI: GoogleGenerativeAI;
   private modelName: string;
+  private cachedModel: ReturnType<GoogleGenerativeAI['getGenerativeModel']> | null = null;
 
   constructor(config: GeminiServiceConfig) {
     this.genAI = new GoogleGenerativeAI(config.apiKey);
@@ -217,19 +218,29 @@ export class GeminiService {
     mimeType: string,
     dictionaryPrompt: string
   ): Promise<string> {
-    const model = this.genAI.getGenerativeModel({ model: this.modelName });
-    const audioBase64 = audioBuffer.toString('base64');
-    const fullPrompt = GEMINI_SYSTEM_PROMPT + dictionaryPrompt;
+    // Cache model instance to avoid recreating it on every call
+    if (!this.cachedModel) {
+      this.cachedModel = this.genAI.getGenerativeModel({
+        model: this.modelName,
+        systemInstruction: GEMINI_SYSTEM_PROMPT,
+      });
+    }
+    const model = this.cachedModel;
 
-    const result = await model.generateContent([
-      { text: fullPrompt },
-      {
-        inlineData: {
-          mimeType,
-          data: audioBase64,
+    const audioBase64 = audioBuffer.toString('base64');
+
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            // Include dictionary prompt inline if present; otherwise just audio
+            ...(dictionaryPrompt ? [{ text: dictionaryPrompt }] : []),
+            { inlineData: { mimeType, data: audioBase64 } },
+          ],
         },
-      },
-    ]);
+      ],
+    });
 
     const response = result.response;
     const text = response.text().trim();
