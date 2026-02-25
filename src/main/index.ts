@@ -1,6 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences, session, shell } from 'electron';
 import * as path from 'path';
-import { writeFileSync } from 'fs';
 
 // Prevent EPIPE errors when stdout/stderr is closed
 process.stdout?.on?.('error', () => {});
@@ -160,9 +159,6 @@ function createWindow(): void {
   mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   loadWindowURL(mainWindow);
-
-  // Open DevTools for debugging (always, temporarily)
-  mainWindow.webContents.openDevTools({ mode: 'detach' });
 
   mainWindow.on('close', (event) => {
     if (!appIsQuitting) {
@@ -347,14 +343,6 @@ async function stopRecording(): Promise<void> {
 
       debugLog('Stopping recording...');
       const audioBuffer = await audioRecorder.stopRecording();
-      debugLog(`Audio buffer size: ${audioBuffer.length}`);
-      debugLog(`Audio header bytes: ${Array.from(audioBuffer.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-      // Save audio for debugging
-      try {
-        writeFileSync('/tmp/dictate-debug-audio.webm', audioBuffer);
-        debugLog('Audio saved to /tmp/dictate-debug-audio.webm');
-      } catch (e) { /* ignore */ }
-
       // Skip if audio is too short (likely no real speech)
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
         debugLog('Audio too short, skipping transcription');
@@ -385,6 +373,13 @@ async function stopRecording(): Promise<void> {
       debugLog(`History saved: "${formattedText}"`);
 
       // Process and type the transcription
+      // If accessibility is not granted, open System Settings automatically
+      if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+        debugLog('Accessibility permission not granted, opening System Settings');
+        shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+        notifyError(window, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
+        return;
+      }
       await processTranscription(transcribedText);
 
     } catch (error: unknown) {
@@ -860,28 +855,14 @@ async function initialize(): Promise<void> {
 
   // Request microphone permission ONCE from main process
   // This prevents the renderer from triggering multiple permission dialogs
-  const hasMicrophone = await requestMicrophonePermission();
-  if (!hasMicrophone) {
-    dialog.showMessageBox({
-      type: 'warning',
-      title: 'Microphone Permission Required',
-      message: 'This app requires microphone access for voice dictation.',
-      detail: 'Please go to System Settings > Privacy & Security > Microphone and enable access for this app.',
-      buttons: ['OK'],
-    });
-  }
+  await requestMicrophonePermission();
 
-  // Check accessibility permission
-  const hasAccessibility = await checkAccessibilityPermission();
-  if (!hasAccessibility) {
-    dialog.showMessageBox({
-      type: 'warning',
-      title: 'Accessibility Permission Required',
-      message: 'This app requires accessibility permission to type text into other applications.',
-      detail: 'Please go to System Settings > Privacy & Security > Accessibility and add this app.',
-      buttons: ['OK'],
-    });
-  }
+  // Check accessibility permission silently (isTrustedAccessibilityClient does NOT
+  // trigger the macOS "wants to control your computer" dialog when prompt=false).
+  // The osascript-based checkAccessibilityPermission() triggers that dialog every
+  // launch which caused the "infinite dialogs" issue.
+  const hasAccessibility = systemPreferences.isTrustedAccessibilityClient(false);
+  debugLog(`Accessibility permission: ${hasAccessibility}`);
 
   // Setup auto-updater
   setupAutoUpdater();
