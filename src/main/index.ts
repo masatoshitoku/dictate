@@ -366,7 +366,7 @@ async function stopRecording(): Promise<void> {
       debugLog('Calling Gemini API...');
       const gemini = getGeminiService();
       const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
-      const transcribedText = await gemini.transcribeAudioBuffer(audioBuffer, 'audio/webm;codecs=opus', dictionaryPrompt);
+      const transcribedText = await gemini.transcribeAudioBuffer(audioBuffer, 'audio/webm', dictionaryPrompt);
       debugLog(`Transcription completed: "${transcribedText}"`);
 
       // Hide window before typing

@@ -252,8 +252,8 @@ export default function App() {
         };
 
         mediaRecorderRef.current = mediaRecorder;
-        console.log('[Renderer] Starting MediaRecorder with 100ms timeslice...');
-        mediaRecorder.start(100);
+        console.log('[Renderer] Starting MediaRecorder (no timeslice)...');
+        mediaRecorder.start();
         console.log('[Renderer] MediaRecorder started, state:', mediaRecorder.state);
         console.log('[Renderer] ====== Recording started successfully ======');
       } catch (error) {
