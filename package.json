@@ -37,7 +37,7 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.16",
     "concurrently": "^8.2.2",
-    "electron": "^28.1.0",
+    "electron": "^40.6.1",
     "electron-builder": "^24.9.1",
     "eslint": "^9.0.0",
     "eslint-plugin-react": "^7.33.2",
@@ -76,11 +76,15 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["universal"]
+          "arch": [
+            "universal"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["universal"]
+          "arch": [
+            "universal"
+          ]
         }
       ],
       "entitlements": "entitlements.mac.plist",

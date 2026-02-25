@@ -736,37 +736,19 @@ let microphonePermissionChecked = false;
 async function requestMicrophonePermission(): Promise<boolean> {
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`Microphone permission status: ${status}`);
-
-  if (status === 'granted') {
-    microphonePermissionGranted = true;
-    microphonePermissionChecked = true;
-    return true;
-  }
-
-  if (status === 'not-determined') {
-    // Don't call askForMediaAccess() - it causes infinite dialog loops on macOS 26+.
-    // Let the renderer's getUserMedia() handle the macOS permission dialog naturally.
-    // The setPermissionRequestHandler auto-grants Chromium's permission check,
-    // and macOS will show its dialog exactly once when hardware is first accessed.
-    debugLog('Permission not-determined: letting renderer handle via getUserMedia');
-    microphonePermissionGranted = true; // Allow renderer to attempt getUserMedia
-    microphonePermissionChecked = true;
-    return true;
-  }
-
-  // 'denied' or 'restricted'
-  debugLog('Microphone permission denied or restricted');
-  microphonePermissionGranted = false;
+  // On macOS 26+, askForMediaAccess() is broken (returns false immediately without dialog).
+  // Permission is handled by the OS when getUserMedia() accesses hardware in the renderer.
+  microphonePermissionGranted = (status === 'granted' || status === 'not-determined');
   microphonePermissionChecked = true;
-  return false;
+  return microphonePermissionGranted;
 }
 
 function checkMicrophonePermission(): boolean {
-  // Dynamically check macOS TCC status so we reflect permission granted via getUserMedia
   const status = systemPreferences.getMediaAccessStatus('microphone');
-  if (status === 'granted') return true;
-  if (status === 'not-determined') return true; // Let renderer attempt getUserMedia
-  return false;
+  debugLog(`checkMicrophonePermission: ${status}`);
+  // Allow renderer to call getUserMedia() for both granted and not-determined.
+  // macOS will show the native dialog when getUserMedia() accesses the hardware.
+  return status === 'granted' || status === 'not-determined';
 }
 
 // ============================================================================
