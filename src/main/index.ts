@@ -734,41 +734,39 @@ let microphonePermissionGranted = false;
 let microphonePermissionChecked = false;
 
 async function requestMicrophonePermission(): Promise<boolean> {
-  // Only request once per app lifetime
-  if (microphonePermissionChecked) {
-    return microphonePermissionGranted;
-  }
-  microphonePermissionChecked = true;
-
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`Microphone permission status: ${status}`);
 
   if (status === 'granted') {
     microphonePermissionGranted = true;
+    microphonePermissionChecked = true;
     return true;
   }
 
   if (status === 'not-determined') {
-    // First time - request permission from main process (this triggers macOS dialog)
-    debugLog('Requesting microphone permission from macOS...');
-    try {
-      microphonePermissionGranted = await systemPreferences.askForMediaAccess('microphone');
-      debugLog(`Microphone permission result: ${microphonePermissionGranted}`);
-      return microphonePermissionGranted;
-    } catch (error) {
-      debugLog(`Microphone permission request failed: ${error}`);
-      return false;
-    }
+    // Don't call askForMediaAccess() - it causes infinite dialog loops on macOS 26+.
+    // Let the renderer's getUserMedia() handle the macOS permission dialog naturally.
+    // The setPermissionRequestHandler auto-grants Chromium's permission check,
+    // and macOS will show its dialog exactly once when hardware is first accessed.
+    debugLog('Permission not-determined: letting renderer handle via getUserMedia');
+    microphonePermissionGranted = true; // Allow renderer to attempt getUserMedia
+    microphonePermissionChecked = true;
+    return true;
   }
 
   // 'denied' or 'restricted'
+  debugLog('Microphone permission denied or restricted');
   microphonePermissionGranted = false;
+  microphonePermissionChecked = true;
   return false;
 }
 
 function checkMicrophonePermission(): boolean {
-  // Just check cached status - don't request
-  return microphonePermissionGranted;
+  // Dynamically check macOS TCC status so we reflect permission granted via getUserMedia
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'not-determined') return true; // Let renderer attempt getUserMedia
+  return false;
 }
 
 // ============================================================================
