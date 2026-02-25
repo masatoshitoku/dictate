@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import type { DictionaryEntry, ShortcutSettings, TranscriptionHistoryEntry } from '../../shared/types';
 
 type MainTab = 'apikey' | 'dictionary' | 'shortcuts' | 'history';
@@ -705,7 +705,7 @@ function ShortcutsSection() {
       } else {
         setCurrentKeys('');
       }
-      setDebugInfo(`keyup: ${key}, remaining: ${pressedKeysRef.current.size}`);
+      // Debug: key=${key}, remaining=${pressedKeysRef.current.size}
     };
 
     document.addEventListener('keydown', handleKeyDown, true);
