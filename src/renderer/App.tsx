@@ -370,46 +370,46 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex items-center justify-center bg-transparent">
-      <div className={`flex items-center gap-3 backdrop-blur-xl rounded-2xl px-4 py-3 border transition-all duration-300 ${
+      <div className={`flex items-center gap-[10px] rounded-[14px] px-[10px] border transition-all duration-300 h-[52px] shadow-[0_2px_4px_rgba(0,0,0,0.5),0_8px_24px_rgba(0,0,0,0.6),0_20px_48px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)] ${
         isRecording
-          ? 'bg-rose-500/10 border-rose-400/30 shadow-[0_8px_32px_rgba(244,63,94,0.3)]'
-          : isProcessing || isTyping
-            ? 'bg-violet-500/10 border-violet-400/30 shadow-[0_8px_32px_rgba(139,92,246,0.3)]'
-            : 'bg-white/10 border-white/20 shadow-[0_8px_32px_rgba(0,0,0,0.3)]'
+          ? 'bg-[rgba(10,10,12,0.91)] border-[rgba(200,170,100,0.18)]'
+          : 'bg-[rgba(10,10,12,0.91)] border-[rgba(255,255,255,0.07)]'
       }`}>
         {/* Cancel button */}
         <button
           onClick={handleCancel}
-          className="w-10 h-10 rounded-xl bg-white/10 hover:bg-white/20 backdrop-blur-sm flex items-center justify-center transition-all duration-200 border border-white/10 hover:border-white/30 hover:scale-105 active:scale-95"
+          className="w-9 h-9 rounded-[9px] bg-transparent hover:bg-white/[0.05] flex items-center justify-center transition-all duration-150 border border-white/[0.07] hover:border-white/[0.15] active:scale-95 flex-shrink-0"
           title="Cancel"
         >
-          <svg className="w-5 h-5 text-white/70 hover:text-white/90" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className="w-[14px] h-[14px] text-white/[0.28]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
 
         {/* Waveform visualization */}
         <div
-          className="flex items-center gap-[4px] h-10 px-3 cursor-pointer rounded-xl bg-white/5 border border-white/10"
+          className="flex items-center gap-[3px] flex-1 h-9 cursor-pointer justify-center"
           onClick={handleToggle}
         >
           {isProcessing || isTyping ? (
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <div className="w-2 h-2 bg-violet-400/80 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="flex items-center gap-[5px]">
+              <div className="w-1 h-1 bg-white/[0.55] rounded-full animate-fade-dot" style={{ animationDelay: '0ms' }} />
+              <div className="w-1 h-1 bg-white/[0.35] rounded-full animate-fade-dot" style={{ animationDelay: '220ms' }} />
+              <div className="w-1 h-1 bg-white/[0.18] rounded-full animate-fade-dot" style={{ animationDelay: '440ms' }} />
+              <div className="w-1 h-1 bg-white/[0.08] rounded-full" />
+              <div className="w-1 h-1 bg-white/[0.04] rounded-full" />
             </div>
           ) : (
             audioLevels.map((level, i) => (
               <div
                 key={i}
-                className={`w-[4px] rounded-full transition-all duration-100 ${
+                className={`w-[2px] rounded-[1px] transition-all duration-75 ${
                   isRecording
-                    ? 'bg-gradient-to-t from-rose-500 to-orange-400'
-                    : 'bg-gradient-to-t from-violet-400/60 to-cyan-400/60'
+                    ? 'bg-[#C8AA6E]'
+                    : 'bg-white/[0.18]'
                 }`}
                 style={{
-                  height: `${Math.max(10, level * 32)}px`,
+                  height: `${Math.max(6, level * 32)}px`,
                 }}
               />
             ))
@@ -420,14 +420,14 @@ export default function App() {
         <button
           onClick={handleConfirm}
           disabled={!isRecording}
-          className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 border ${
+          className={`w-9 h-9 rounded-[9px] flex items-center justify-center transition-all duration-150 border flex-shrink-0 ${
             isRecording
-              ? 'bg-gradient-to-br from-emerald-500/30 to-cyan-500/30 hover:from-emerald-500/40 hover:to-cyan-500/40 border-emerald-400/30 hover:border-emerald-400/50 text-emerald-300 hover:scale-105 active:scale-95'
-              : 'bg-white/5 border-white/10 text-white/30 cursor-not-allowed'
+              ? 'bg-[rgba(200,170,100,0.08)] border-[rgba(200,170,100,0.55)] hover:bg-[rgba(200,170,100,0.12)] active:scale-95'
+              : 'bg-transparent border-white/[0.05] cursor-not-allowed'
           }`}
           title="Confirm"
         >
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <svg className={`w-[14px] h-[14px] ${isRecording ? 'text-[#C8AA6E]' : 'text-white/[0.12]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </button>
