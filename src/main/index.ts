@@ -36,7 +36,7 @@ const SETTINGS_WINDOW_HEIGHT = 600;
 const SETTINGS_WINDOW_MIN_WIDTH = 600;
 const SETTINGS_WINDOW_MIN_HEIGHT = 400;
 const WINDOW_HIDE_DELAY_MS = 100;
-const MIN_AUDIO_BUFFER_SIZE = 5000; // Minimum audio buffer size in bytes (~0.5 seconds)
+const MIN_AUDIO_BUFFER_SIZE = 1000; // Minimum audio buffer size in bytes
 
 // ============================================================================
 // Store
@@ -317,7 +317,7 @@ async function processTranscription(transcribedText: string): Promise<void> {
 
   // Remove unnecessary spaces from Japanese text
   const formattedText = removeJapaneseSpaces(transcribedText);
-  debugLog(`About to type: "${formattedText}"`);
+  debugLog(`About to type: "${formattedText}" → targetApp: "${previousFrontApp ?? 'none'}"`);
 
   // Wait for window to fully hide before typing
   await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
@@ -777,9 +777,10 @@ async function requestMicrophonePermission(): Promise<boolean> {
 function checkMicrophonePermission(): boolean {
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`checkMicrophonePermission: ${status}`);
-  // Only return true when macOS TCC has actually granted permission.
-  // 'not-determined' means the dialog is pending - user hasn't responded yet.
-  return status === 'granted';
+  // macOS 26 Tahoe beta bug: getMediaAccessStatus() returns 'not-determined'
+  // even when permission is enabled in System Settings → Microphone.
+  // Only block if explicitly denied; otherwise allow and let the OS enforce TCC.
+  return status !== 'denied';
 }
 
 // ============================================================================
@@ -863,7 +864,11 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionCheckHandler((webContents, permission) => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
       const status = systemPreferences.getMediaAccessStatus('microphone');
-      const granted = status === 'granted';
+      // macOS 26 Tahoe beta bug: getMediaAccessStatus() returns 'not-determined'
+      // even when the user has granted access in System Settings → Microphone.
+      // Only block if explicitly denied; otherwise allow and let the OS kernel
+      // enforce TCC at the hardware level.
+      const granted = status !== 'denied';
       debugLog(`setPermissionCheckHandler: ${permission} → TCC=${status}, granted=${granted}`);
       return granted;
     }
@@ -875,16 +880,19 @@ app.whenReady().then(() => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
       const status = systemPreferences.getMediaAccessStatus('microphone');
       debugLog(`setPermissionRequestHandler: ${permission} → TCC=${status}`);
-      if (status === 'granted') {
-        callback(true);
-      } else {
-        // Trigger macOS TCC dialog. On macOS 26+ this may return false immediately
-        // while the dialog is still shown asynchronously.
-        systemPreferences.askForMediaAccess('microphone').then(granted => {
-          debugLog(`askForMediaAccess resolved: ${granted}`);
-          callback(granted);
+      if (status === 'denied') {
+        callback(false);
+        return;
+      }
+      // For 'granted' or 'not-determined' (macOS 26 TCC API bug), allow Chromium
+      // to proceed. The OS kernel enforces TCC at a lower level.
+      // If truly not-determined, also fire the permission dialog (fire-and-forget).
+      if (status !== 'granted') {
+        systemPreferences.askForMediaAccess('microphone').then(result => {
+          debugLog(`askForMediaAccess resolved: ${result}`);
         });
       }
+      callback(true);
     } else {
       callback(true);
     }

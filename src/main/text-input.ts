@@ -122,27 +122,43 @@ export async function typeText(text: string, options: TypeTextOptions = {}): Pro
 
 /**
  * Paste from clipboard using Cmd+V via AppleScript.
- * If targetApp is provided, activates that app first to ensure the paste
- * goes to the correct window (not the Dictate app itself).
+ * If targetApp is provided, activates that process via System Events first.
+ * Using "set frontmost of process" avoids the Automation permission dialog
+ * that would appear with "tell application X to activate".
  */
 export async function pasteFromClipboard(targetApp?: string): Promise<void> {
-  const activatePart = targetApp
-    ? `tell application "${targetApp}" to activate\n    delay 0.2\n    `
-    : `delay 0.1\n    `;
+  let script: string;
 
-  const script = `
-    ${activatePart}tell application "System Events"
-      keystroke "v" using command down
-    end tell
-  `;
+  if (targetApp) {
+    const safeApp = escapeAppleScript(targetApp);
+    // Activate via System Events process API — requires only Accessibility permission,
+    // NOT the per-app Automation permission that "tell application X to activate" needs.
+    script = `
+      tell application "System Events"
+        try
+          set frontmost of process "${safeApp}" to true
+        end try
+        delay 0.3
+        keystroke "v" using command down
+      end tell
+    `;
+  } else {
+    script = `
+      tell application "System Events"
+        delay 0.2
+        keystroke "v" using command down
+      end tell
+    `;
+  }
+
+  console.log(`[dictate] pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
 
   try {
     await execFileAsync('osascript', ['-e', script]);
+    console.log('[dictate] pasteFromClipboard: success');
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    if (!app.isPackaged) {
-      console.error('Paste error:', message);
-    }
+    console.error(`[dictate] pasteFromClipboard error: ${message}`);
     throw new Error('Failed to paste. Please check accessibility permissions.');
   }
 }
