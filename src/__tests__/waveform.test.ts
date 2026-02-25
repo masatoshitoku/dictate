@@ -1,0 +1,102 @@
+import { describe, it, expect } from 'vitest';
+import {
+  BELL_CURVE,
+  BAR_COUNT,
+  INITIAL_AUDIO_LEVELS,
+  DEFAULT_AUDIO_LEVEL,
+  AUDIO_LEVEL_FLOOR,
+  WAVEFORM_MAX_HEIGHT_PX,
+  WAVEFORM_MIN_HEIGHT_SCALE,
+  computeBarHeight,
+  computeAudioLevels,
+} from '../shared/waveform';
+
+describe('waveform constants', () => {
+  it('BAR_COUNT equals BELL_CURVE.length', () => {
+    expect(BAR_COUNT).toBe(BELL_CURVE.length);
+  });
+
+  it('INITIAL_AUDIO_LEVELS has correct length and values', () => {
+    expect(INITIAL_AUDIO_LEVELS).toHaveLength(BAR_COUNT);
+    expect(INITIAL_AUDIO_LEVELS.every(v => v === DEFAULT_AUDIO_LEVEL)).toBe(true);
+  });
+
+  it('INITIAL_AUDIO_LEVELS is frozen (immutable)', () => {
+    expect(Object.isFrozen(INITIAL_AUDIO_LEVELS)).toBe(true);
+  });
+
+  it('BELL_CURVE is symmetric', () => {
+    for (let i = 0; i < Math.floor(BAR_COUNT / 2); i++) {
+      expect(BELL_CURVE[i]).toBe(BELL_CURVE[BAR_COUNT - 1 - i]);
+    }
+  });
+
+  it('BELL_CURVE peak is at center', () => {
+    const center = Math.floor(BAR_COUNT / 2);
+    expect(BELL_CURVE[center]).toBe(1.0);
+  });
+});
+
+describe('computeBarHeight', () => {
+  it('returns minimum height for zero level', () => {
+    const height = computeBarHeight(0, 0.5);
+    expect(height).toBe(0.5 * WAVEFORM_MIN_HEIGHT_SCALE);
+  });
+
+  it('returns full height for max level and center bell weight', () => {
+    const height = computeBarHeight(1.0, 1.0);
+    expect(height).toBe(WAVEFORM_MAX_HEIGHT_PX);
+  });
+
+  it('respects minimum height floor for small levels', () => {
+    const bellWeight = 0.85;
+    const height = computeBarHeight(0.01, bellWeight);
+    expect(height).toBeGreaterThanOrEqual(bellWeight * WAVEFORM_MIN_HEIGHT_SCALE);
+  });
+
+  it('scales linearly with level', () => {
+    const h1 = computeBarHeight(0.5, 1.0);
+    const h2 = computeBarHeight(1.0, 1.0);
+    expect(h2).toBeCloseTo(h1 * 2, 5);
+  });
+
+  it('scales linearly with bell weight (above minimum)', () => {
+    const h1 = computeBarHeight(1.0, 0.5);
+    const h2 = computeBarHeight(1.0, 1.0);
+    expect(h2).toBeCloseTo(h1 * 2, 5);
+  });
+});
+
+describe('computeAudioLevels', () => {
+  it('returns correct number of bars', () => {
+    const data = new Uint8Array([100, 150, 200, 128, 64, 32, 80, 120, 90, 110, 140, 170, 200, 50, 100, 130]);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels).toHaveLength(BAR_COUNT);
+  });
+
+  it('applies floor to silent data', () => {
+    const data = new Uint8Array(16).fill(0);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels.every(l => l >= AUDIO_LEVEL_FLOOR)).toBe(true);
+    expect(levels.every(l => l === AUDIO_LEVEL_FLOOR)).toBe(true);
+  });
+
+  it('normalizes max volume to 1.0', () => {
+    const data = new Uint8Array(16).fill(255);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels.every(l => l === 1.0)).toBe(true);
+  });
+
+  it('handles single-element data array', () => {
+    const data = new Uint8Array([128]);
+    const levels = computeAudioLevels(data, 3);
+    expect(levels).toHaveLength(3);
+    expect(levels.every(l => l === 128 / 255)).toBe(true);
+  });
+
+  it('handles arbitrary bar count', () => {
+    const data = new Uint8Array(8).fill(200);
+    const levels = computeAudioLevels(data, 5);
+    expect(levels).toHaveLength(5);
+  });
+});

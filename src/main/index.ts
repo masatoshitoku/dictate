@@ -15,6 +15,7 @@ import { historyService } from './services/history';
 import { setupAutoUpdater } from './services/updater';
 import { typeText, getFrontmostApp, checkAccessibilityPermission } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
+import { removeJapaneseSpaces } from '../shared/text-processing';
 import {
   getApiKey,
   hasApiKey,
@@ -65,9 +66,10 @@ let previousFrontApp: string | null = null; // App that was active before record
 // ============================================================================
 
 /**
- * Debug logging (ENABLED in all modes for debugging permission issue)
+ * Debug logging — suppressed in production builds to avoid info leakage.
  */
 function debugLog(msg: string): void {
+  if (app.isPackaged) return;
   try {
     console.log(`[dictate] ${msg}`);
   } catch {
@@ -279,40 +281,15 @@ async function startRecording(): Promise<void> {
 }
 
 /**
- * Process transcription result and type text
+ * Process transcription result and type text.
+ * Expects already-formatted text (removeJapaneseSpaces applied by caller).
  */
-// Remove unnecessary spaces from Japanese text
-function removeJapaneseSpaces(text: string): string {
-  // Japanese character ranges
-  const japanesePattern = /[\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF]/;
-
-  let result = text;
-  let prev = '';
-
-  // Repeat until no more changes (handles consecutive spaces)
-  while (result !== prev) {
-    prev = result;
-    // Remove spaces between Japanese characters
-    result = result.replace(/([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g, '$1$2');
-    // Remove spaces between Japanese and ASCII
-    result = result.replace(/([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([a-zA-Z0-9])/g, '$1$2');
-    result = result.replace(/([a-zA-Z0-9])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g, '$1$2');
-  }
-
-  // Also convert full-width spaces to nothing when between Japanese
-  result = result.replace(/\u3000/g, '');
-
-  return result;
-}
-
-async function processTranscription(transcribedText: string): Promise<void> {
-  if (!transcribedText || transcribedText.length === 0) {
+async function processTranscription(formattedText: string): Promise<void> {
+  if (!formattedText || formattedText.length === 0) {
     debugLog('No text to type');
     return;
   }
 
-  // Remove unnecessary spaces from Japanese text
-  const formattedText = removeJapaneseSpaces(transcribedText);
   debugLog(`About to type: "${formattedText}" → targetApp: "${previousFrontApp ?? 'none'}"`);
 
   // Wait for window to fully hide before typing
@@ -368,12 +345,11 @@ async function stopRecording(): Promise<void> {
         return;
       }
 
-      // Save to history
+      // Format once, use for both history and typing
       const formattedText = removeJapaneseSpaces(transcribedText);
       historyService.add(transcribedText, formattedText);
       debugLog(`History saved: "${formattedText}"`);
 
-      // Process and type the transcription
       // If accessibility is not granted, open System Settings automatically
       if (!systemPreferences.isTrustedAccessibilityClient(false)) {
         debugLog('Accessibility permission not granted, opening System Settings');
@@ -381,7 +357,7 @@ async function stopRecording(): Promise<void> {
         notifyError(window, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
         return;
       }
-      await processTranscription(transcribedText);
+      await processTranscription(formattedText);
 
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
@@ -449,222 +425,71 @@ function getTrayConfig(): TrayConfig {
 }
 
 // ============================================================================
-// IPC Handlers with Error Handling
+// IPC Handlers
 // ============================================================================
+
+/**
+ * Register an IPC handler with standardized error wrapping.
+ * The handler receives only the user-supplied args (event is stripped).
+ */
+function safeHandle(channel: string, handler: (...args: any[]) => any): void {
+  ipcMain.handle(channel, async (_event, ...args) => {
+    try {
+      return await handler(...args);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      throw new Error(`${channel} failed: ${message}`);
+    }
+  });
+}
 
 function setupIPC(): void {
   // Recording
-  ipcMain.handle(IPC_CHANNELS.START_RECORDING, async () => {
-    try {
-      await startRecording();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to start recording: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.STOP_RECORDING, async () => {
-    try {
-      await stopRecording();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to stop recording: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.TOGGLE_RECORDING, async () => {
-    try {
-      await toggleRecording();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to toggle recording: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.CANCEL_RECORDING, async () => {
-    try {
-      await cancelRecording();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to cancel recording: ${message}`);
-    }
-  });
+  safeHandle(IPC_CHANNELS.START_RECORDING, () => startRecording());
+  safeHandle(IPC_CHANNELS.STOP_RECORDING, () => stopRecording());
+  safeHandle(IPC_CHANNELS.TOGGLE_RECORDING, () => toggleRecording());
+  safeHandle(IPC_CHANNELS.CANCEL_RECORDING, () => cancelRecording());
 
   // Settings
-  ipcMain.handle(IPC_CHANNELS.GET_SETTINGS, () => {
-    try {
-      return store.get('settings');
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get settings: ${message}`);
-    }
+  safeHandle(IPC_CHANNELS.GET_SETTINGS, () => store.get('settings'));
+  safeHandle(IPC_CHANNELS.SAVE_SETTINGS, (settings: Partial<AppSettings>) => {
+    const currentSettings = store.get('settings');
+    const newSettings = { ...currentSettings, ...settings };
+    store.set('settings', newSettings);
+    return newSettings;
   });
-
-  ipcMain.handle(IPC_CHANNELS.SAVE_SETTINGS, (_event, settings: Partial<AppSettings>) => {
-    try {
-      const currentSettings = store.get('settings');
-      const newSettings = { ...currentSettings, ...settings };
-      store.set('settings', newSettings);
-      return newSettings;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to save settings: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.CHECK_ACCESSIBILITY, async () => {
-    try {
-      return await checkAccessibilityPermission();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to check accessibility: ${message}`);
-    }
-  });
+  safeHandle(IPC_CHANNELS.CHECK_ACCESSIBILITY, () => checkAccessibilityPermission());
 
   // Dictionary
-  ipcMain.handle(IPC_CHANNELS.GET_DICTIONARY, () => {
-    try {
-      return dictionaryService.getAll();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get dictionary: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.GET_DICTIONARY_BY_CATEGORY, (_event, category: 'auto' | 'manual') => {
-    try {
-      return dictionaryService.getByCategory(category);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get dictionary by category: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.SEARCH_DICTIONARY, (_event, query: string) => {
-    try {
-      return dictionaryService.search(query);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to search dictionary: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.ADD_DICTIONARY_ENTRY, (_event, reading: string, word: string, category?: 'auto' | 'manual') => {
-    try {
-      return dictionaryService.add(reading, word, category);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to add dictionary entry: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.UPDATE_DICTIONARY_ENTRY, (_event, id: string, updates: { reading?: string; word?: string }) => {
-    try {
-      return dictionaryService.update(id, updates);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to update dictionary entry: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.DELETE_DICTIONARY_ENTRY, (_event, id: string) => {
-    try {
-      return dictionaryService.delete(id);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to delete dictionary entry: ${message}`);
-    }
-  });
+  safeHandle(IPC_CHANNELS.GET_DICTIONARY, () => dictionaryService.getAll());
+  safeHandle(IPC_CHANNELS.GET_DICTIONARY_BY_CATEGORY, (category: 'auto' | 'manual') => dictionaryService.getByCategory(category));
+  safeHandle(IPC_CHANNELS.SEARCH_DICTIONARY, (query: string) => dictionaryService.search(query));
+  safeHandle(IPC_CHANNELS.ADD_DICTIONARY_ENTRY, (reading: string, word: string, category?: 'auto' | 'manual') => dictionaryService.add(reading, word, category));
+  safeHandle(IPC_CHANNELS.UPDATE_DICTIONARY_ENTRY, (id: string, updates: { reading?: string; word?: string }) => dictionaryService.update(id, updates));
+  safeHandle(IPC_CHANNELS.DELETE_DICTIONARY_ENTRY, (id: string) => dictionaryService.delete(id));
 
   // History
-  ipcMain.handle(IPC_CHANNELS.GET_HISTORY, () => {
-    try {
-      return historyService.getAll();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get history: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.SEARCH_HISTORY, (_event, query: string) => {
-    try {
-      return historyService.search(query);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to search history: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.DELETE_HISTORY_ENTRY, (_event, id: string) => {
-    try {
-      return historyService.delete(id);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to delete history entry: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.DELETE_ALL_HISTORY, () => {
-    try {
-      historyService.deleteAll();
-      return true;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to delete all history: ${message}`);
-    }
-  });
+  safeHandle(IPC_CHANNELS.GET_HISTORY, () => historyService.getAll());
+  safeHandle(IPC_CHANNELS.SEARCH_HISTORY, (query: string) => historyService.search(query));
+  safeHandle(IPC_CHANNELS.DELETE_HISTORY_ENTRY, (id: string) => historyService.delete(id));
+  safeHandle(IPC_CHANNELS.DELETE_ALL_HISTORY, () => { historyService.deleteAll(); return true; });
 
   // Window
-  ipcMain.handle(IPC_CHANNELS.OPEN_SETTINGS, () => {
-    try {
-      createSettingsWindow();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to open settings: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.CLOSE_SETTINGS, () => {
-    try {
-      settingsWindow?.close();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to close settings: ${message}`);
-    }
-  });
+  safeHandle(IPC_CHANNELS.OPEN_SETTINGS, () => createSettingsWindow());
+  safeHandle(IPC_CHANNELS.CLOSE_SETTINGS, () => settingsWindow?.close());
 
   // API Key management
-  ipcMain.handle(IPC_CHANNELS.SAVE_API_KEY, async (_event, apiKey: string) => {
-    try {
-      const result = saveApiKey(apiKey);
-      if (result) {
-        initGeminiService(apiKey);
-      }
-      return result;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to save API key: ${message}`);
+  safeHandle(IPC_CHANNELS.SAVE_API_KEY, (apiKey: string) => {
+    const result = saveApiKey(apiKey);
+    if (result) {
+      initGeminiService(apiKey);
     }
+    return result;
   });
+  safeHandle(IPC_CHANNELS.HAS_API_KEY, () => hasApiKey());
+  safeHandle(IPC_CHANNELS.GET_MASKED_API_KEY, () => getMaskedApiKey());
 
-  ipcMain.handle(IPC_CHANNELS.HAS_API_KEY, () => {
-    try {
-      return hasApiKey();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to check API key: ${message}`);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.GET_MASKED_API_KEY, () => {
-    try {
-      return getMaskedApiKey();
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get masked API key: ${message}`);
-    }
-  });
-
+  // Validate API key — returns error object instead of throwing
   ipcMain.handle(IPC_CHANNELS.VALIDATE_API_KEY, async (_event, apiKey: string) => {
     try {
       return await validateApiKey(apiKey);
@@ -674,59 +499,39 @@ function setupIPC(): void {
     }
   });
 
+  // Encryption check — returns false on error instead of throwing
   ipcMain.handle(IPC_CHANNELS.IS_ENCRYPTION_AVAILABLE, () => {
     try {
       return isEncryptionAvailable();
-    } catch (error: unknown) {
+    } catch {
       return false;
     }
   });
 
   // Shortcuts
-  ipcMain.handle(IPC_CHANNELS.GET_SHORTCUTS, () => {
-    try {
-      const settings = store.get('settings');
-      return settings.shortcuts || DEFAULT_SHORTCUTS;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to get shortcuts: ${message}`);
+  safeHandle(IPC_CHANNELS.GET_SHORTCUTS, () => {
+    const settings = store.get('settings');
+    return settings.shortcuts || DEFAULT_SHORTCUTS;
+  });
+  safeHandle(IPC_CHANNELS.SAVE_SHORTCUTS, (shortcuts: ShortcutSettings) => {
+    const success = shortcutManager.updateShortcuts(shortcuts);
+    if (success) {
+      const currentSettings = store.get('settings');
+      store.set('settings', { ...currentSettings, shortcuts });
     }
+    return success;
   });
 
-  ipcMain.handle(IPC_CHANNELS.SAVE_SHORTCUTS, (_event, shortcuts: ShortcutSettings) => {
-    try {
-      const success = shortcutManager.updateShortcuts(shortcuts);
-      if (success) {
-        const currentSettings = store.get('settings');
-        store.set('settings', { ...currentSettings, shortcuts });
-      }
-      return success;
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to save shortcuts: ${message}`);
-    }
-  });
-
+  // Pause/resume — return false on error instead of throwing
   ipcMain.handle(IPC_CHANNELS.PAUSE_SHORTCUTS, () => {
-    try {
-      shortcutManager.pause();
-      return true;
-    } catch (error: unknown) {
-      return false;
-    }
+    try { shortcutManager.pause(); return true; } catch { return false; }
   });
-
   ipcMain.handle(IPC_CHANNELS.RESUME_SHORTCUTS, () => {
-    try {
-      shortcutManager.resume();
-      return true;
-    } catch (error: unknown) {
-      return false;
-    }
+    try { shortcutManager.resume(); return true; } catch { return false; }
   });
 
-  // Permission check - returns cached status without triggering dialog
-  ipcMain.handle(IPC_CHANNELS.CHECK_MICROPHONE_PERMISSION, () => {
+  // Permission check
+  safeHandle(IPC_CHANNELS.CHECK_MICROPHONE_PERMISSION, () => {
     const result = checkMicrophonePermission();
     debugLog(`IPC CHECK_MICROPHONE_PERMISSION called, returning: ${result}`);
     return result;
@@ -905,7 +710,8 @@ app.whenReady().then(() => {
       // AVFoundation level regardless of what we return here.
       callback(true);
     } else {
-      callback(true);
+      // Deny all non-media permissions by default (principle of least privilege)
+      callback(false);
     }
   });
 
