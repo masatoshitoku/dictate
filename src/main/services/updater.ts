@@ -1,6 +1,7 @@
 import { autoUpdater } from 'electron-updater';
 import { app, dialog, net } from 'electron';
 import Store from 'electron-store';
+import { createLogger } from '../utils/logger';
 
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 const STARTUP_DELAY_MS = 10000; // 10 seconds
@@ -10,14 +11,7 @@ const store = new Store<{ lastUpdateCheck: number }>({
   defaults: { lastUpdateCheck: 0 },
 });
 
-function debugLog(msg: string): void {
-  if (app.isPackaged) return;
-  try {
-    console.log(`[updater] ${msg}`);
-  } catch {
-    // Ignore EPIPE errors
-  }
-}
+const debugLog = createLogger('updater');
 
 export function setupAutoUpdater(): void {
   if (!app.isPackaged) {

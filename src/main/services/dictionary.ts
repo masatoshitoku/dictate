@@ -60,9 +60,10 @@ export class DictionaryService {
 
     if (index === -1) return null;
 
-    entries[index] = { ...entries[index], ...updates };
-    store.set('entries', entries);
-    return entries[index];
+    const updated = { ...entries[index], ...updates };
+    const newEntries = [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
+    store.set('entries', newEntries);
+    return updated;
   }
 
   delete(id: string): boolean {
@@ -77,11 +78,12 @@ export class DictionaryService {
 
   incrementUsage(id: string): void {
     const entries = this.getAll();
-    const entry = entries.find(e => e.id === id);
+    const index = entries.findIndex(e => e.id === id);
 
-    if (entry) {
-      entry.usageCount++;
-      store.set('entries', entries);
+    if (index !== -1) {
+      const updated = { ...entries[index], usageCount: entries[index].usageCount + 1 };
+      const newEntries = [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
+      store.set('entries', newEntries);
     }
   }
 

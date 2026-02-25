@@ -24,6 +24,7 @@ import {
   getMaskedApiKey,
   isEncryptionAvailable
 } from './secure-storage';
+import { createLogger, logCriticalError } from './utils/logger';
 
 // ============================================================================
 // Constants
@@ -65,17 +66,7 @@ let previousFrontApp: string | null = null; // App that was active before record
 // Shared Utilities
 // ============================================================================
 
-/**
- * Debug logging — suppressed in production builds to avoid info leakage.
- */
-function debugLog(msg: string): void {
-  if (app.isPackaged) return;
-  try {
-    console.log(`[dictate] ${msg}`);
-  } catch {
-    // Ignore EPIPE errors when stdout is closed
-  }
-}
+const debugLog = createLogger('dictate');
 
 /**
  * Get default web preferences for BrowserWindow
@@ -249,28 +240,33 @@ async function toggleRecording(): Promise<void> {
     return;
   }
 
-  if (isRecording || stopPromise) {
-    // Always allow stopping - no debounce for stop
-    await stopRecording();
-  } else {
-    // Debounce only for starting
-    if (now - lastStartTime < START_DEBOUNCE_MS) {
-      debugLog('Start debounced');
-      return;
+  try {
+    if (isRecording || stopPromise) {
+      // Always allow stopping - no debounce for stop
+      await stopRecording();
+    } else {
+      // Debounce only for starting
+      if (now - lastStartTime < START_DEBOUNCE_MS) {
+        debugLog('Start debounced');
+        return;
+      }
+      lastStartTime = now;
+
+      // Capture the frontmost app BEFORE showing the Dictate window,
+      // so we can restore focus to it when pasting the transcription.
+      previousFrontApp = await getFrontmostApp();
+      debugLog(`Previous front app: ${previousFrontApp}`);
+
+      // Ensure window is visible on all workspaces before showing
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      mainWindow.setAlwaysOnTop(true, 'floating');
+      positionWindowOnCurrentScreen();
+      mainWindow.showInactive();
+      await startRecording();
     }
-    lastStartTime = now;
-
-    // Capture the frontmost app BEFORE showing the Dictate window,
-    // so we can restore focus to it when pasting the transcription.
-    previousFrontApp = await getFrontmostApp();
-    debugLog(`Previous front app: ${previousFrontApp}`);
-
-    // Ensure window is visible on all workspaces before showing
-    mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    mainWindow.setAlwaysOnTop(true, 'floating');
-    positionWindowOnCurrentScreen();
-    mainWindow.showInactive();
-    await startRecording();
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    debugLog(`toggleRecording error: ${message}`);
   }
 }
 
@@ -288,6 +284,7 @@ async function startRecording(): Promise<void> {
     debugLog(`Failed to start recording: ${message}`);
     notifyError(mainWindow, 'Failed to start recording. Please check microphone permissions.');
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
+    mainWindow.hide();
   }
 }
 
@@ -327,7 +324,9 @@ async function stopRecording(): Promise<void> {
   }
 
   stopPromise = (async () => {
-    let errorSent = false;
+    // Tracks whether we already sent a terminal status (error/idle) to the renderer.
+    // The finally block uses this to avoid sending a redundant 'idle' after an error status.
+    let statusAlreadyUpdated = false;
     try {
       safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
@@ -362,15 +361,17 @@ async function stopRecording(): Promise<void> {
 
       // If accessibility is not granted, open System Settings automatically
       if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+        statusAlreadyUpdated = true;
         debugLog('Accessibility permission not granted, opening System Settings');
         shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
         notifyError(targetWindow, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
+        safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
         return;
       }
       await processTranscription(formattedText);
 
     } catch (error: unknown) {
-      errorSent = true;
+      statusAlreadyUpdated = true;
       const message = error instanceof Error ? error.message : 'Unknown error';
       debugLog(`Recording error: ${message}`);
 
@@ -383,7 +384,7 @@ async function stopRecording(): Promise<void> {
       isRecording = false;
       stopPromise = null;
       trayManager.setRecordingState(false, getTrayConfig());
-      if (!errorSent) {
+      if (!statusAlreadyUpdated) {
         safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
       }
     }
@@ -397,13 +398,20 @@ async function cancelRecording(): Promise<void> {
   if (!targetWindow) return;
 
   if (stopPromise) {
-    // A stop is already in-flight — await it to avoid racing on audioRecorder
+    // A stop is already in-flight — await it; stopRecording handles its own cleanup
     try {
       await stopPromise;
     } catch {
       // Ignore errors from the in-flight stop
     }
-  } else if (isRecording) {
+    // stopRecording already sent 'idle', hid the window, and reset state.
+    // Only send CANCEL_RECORDING so the renderer discards any pending result.
+    safeSend(targetWindow, IPC_CHANNELS.CANCEL_RECORDING);
+    debugLog('Recording cancelled (was already stopping)');
+    return;
+  }
+
+  if (isRecording) {
     // Active recording with no stop in-flight — stop recorder and discard
     try {
       await audioRecorder.stopRecording();
@@ -780,10 +788,11 @@ app.on('before-quit', () => {
 
 process.on('uncaughtException', (error: Error) => {
   debugLog(`Uncaught exception: ${error.message}`);
-  // Let the app continue for non-fatal errors
+  logCriticalError('uncaughtException', error);
 });
 
 process.on('unhandledRejection', (reason: unknown) => {
   const message = reason instanceof Error ? reason.message : String(reason);
   debugLog(`Unhandled rejection: ${message}`);
+  logCriticalError('unhandledRejection', message);
 });

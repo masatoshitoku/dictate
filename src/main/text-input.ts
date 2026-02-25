@@ -1,9 +1,11 @@
 import { execFile } from 'child_process';
 import { promisify } from 'util';
-import { app, clipboard } from 'electron';
+import { clipboard } from 'electron';
 import { escapeAppleScript, requiresClipboardForText } from '../shared/string-utils';
+import { createLogger } from './utils/logger';
 
 const execFileAsync = promisify(execFile);
+const debugLog = createLogger('text-input');
 
 // Constants
 const TYPING_DELAYS: Record<TypingSpeed, number> = {
@@ -51,9 +53,7 @@ async function typeChunk(text: string): Promise<void> {
     await execFileAsync('osascript', ['-e', script]);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    if (!app.isPackaged) {
-      console.error('AppleScript error:', message);
-    }
+    debugLog(`AppleScript error: ${message}`);
     throw new Error('Failed to type text. Please check accessibility permissions.');
   }
 }
@@ -140,20 +140,14 @@ export async function pasteFromClipboard(targetApp?: string): Promise<void> {
     `;
   }
 
-  if (!app.isPackaged) {
-    console.log(`[dictate] pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
-  }
+  debugLog(`pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
 
   try {
     await execFileAsync('osascript', ['-e', script]);
-    if (!app.isPackaged) {
-      console.log('[dictate] pasteFromClipboard: success');
-    }
+    debugLog('pasteFromClipboard: success');
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    if (!app.isPackaged) {
-      console.error(`[dictate] pasteFromClipboard error: ${message}`);
-    }
+    debugLog(`pasteFromClipboard error: ${message}`);
     throw new Error('Failed to paste. Please check accessibility permissions.');
   }
 }

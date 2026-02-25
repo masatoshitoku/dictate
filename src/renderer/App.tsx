@@ -64,15 +64,15 @@ export default function App() {
 
   // Initialize stream ONCE globally
   const initGlobalStream = useCallback(async (): Promise<MediaStream | null> => {
-    if (globalStream && globalStream.active) {
-      const tracks = globalStream.getAudioTracks();
-      const allTracksLive = tracks.length > 0 && tracks.every(track => track.readyState === 'live');
-      if (allTracksLive) return globalStream;
-      globalStream = null;
-    }
-
-    if (globalStream && !globalStream.active) {
-      globalStream = null;
+    if (globalStream) {
+      if (!globalStream.active) {
+        globalStream = null;
+      } else {
+        const tracks = globalStream.getAudioTracks();
+        const allTracksLive = tracks.length > 0 && tracks.every(track => track.readyState === 'live');
+        if (allTracksLive) return globalStream;
+        globalStream = null;
+      }
     }
 
     if (streamInitPromise) return streamInitPromise;

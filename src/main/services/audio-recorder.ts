@@ -1,13 +1,10 @@
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { createLogger } from '../utils/logger';
 
-/** Suppress debug logs in production builds to avoid info leakage. */
-function debugLog(msg: string): void {
-  if (app.isPackaged) return;
-  try { console.log(msg); } catch { /* EPIPE */ }
-}
+const debugLog = createLogger('AudioRecorder');
 
 export interface AudioRecorderConfig {
   sampleRate?: number;
@@ -39,64 +36,66 @@ export class AudioRecorder {
   }
 
   startRecording(): void {
-    debugLog('[AudioRecorder] startRecording called');
+    debugLog('startRecording called');
 
     if (!this.mainWindow) {
-      debugLog('[AudioRecorder] No mainWindow, aborting');
+      debugLog('No mainWindow, aborting');
       return;
     }
 
     // Force reset state if stuck
     if (this.isStopping) {
-      debugLog('[AudioRecorder] Forcing reset of isStopping flag');
+      debugLog('Forcing reset of isStopping flag');
       this.isStopping = false;
       this.pendingStopPromise = null;
     }
 
     if (this.isRecording) {
-      debugLog('[AudioRecorder] Already recording, ignoring start');
+      debugLog('Already recording, ignoring start');
       return;
     }
 
     this.isRecording = true;
     this.pendingStopPromise = null;
     this.currentRecordingId++; // New recording session
-    debugLog(`[AudioRecorder] New session ID: ${this.currentRecordingId}`);
+    debugLog(`New session ID: ${this.currentRecordingId}`);
 
     this.mainWindow.webContents.send('start-audio-capture');
-    debugLog('[AudioRecorder] Recording started');
+    debugLog('Recording started');
   }
 
   stopRecording(): Promise<Buffer> {
-    debugLog('[AudioRecorder] stopRecording called');
+    debugLog('stopRecording called');
 
     // If already stopping, return the pending promise
     if (this.isStopping && this.pendingStopPromise) {
-      debugLog('[AudioRecorder] Already stopping, returning pending promise');
+      debugLog('Already stopping, returning pending promise');
       return this.pendingStopPromise;
     }
 
     this.pendingStopPromise = new Promise((resolve, reject) => {
       if (!this.isRecording || !this.mainWindow) {
-        debugLog(`[AudioRecorder] Cannot stop: isRecording=${this.isRecording}, hasWindow=${!!this.mainWindow}`);
+        debugLog(`Cannot stop: isRecording=${this.isRecording}, hasWindow=${!!this.mainWindow}`);
         // Reset state to prevent stuck state
         this.isRecording = false;
         this.isStopping = false;
-        this.pendingStopPromise = null;
+        // NOTE: Do NOT null pendingStopPromise here — this runs synchronously inside
+        // the Promise constructor, and the caller returns this.pendingStopPromise.
+        // Nulling it would cause the caller to return null instead of a Promise.
         reject(new Error('Not recording'));
         return;
       }
 
       this.isStopping = true;
       const recordingIdAtStop = this.currentRecordingId;
-      debugLog(`[AudioRecorder] Waiting for audio data (session ${recordingIdAtStop})`);
+      debugLog(`Waiting for audio data (session ${recordingIdAtStop})`);
 
       const handler = (_event: Electron.IpcMainEvent, audioData: ArrayBuffer) => {
         ipcMain.removeListener('audio-data-ready', handler);
         this.isRecording = false;
         this.isStopping = false;
         this.pendingStopPromise = null;
-        debugLog(`[AudioRecorder] Audio received, ${audioData.byteLength} bytes`);
+        debugLog(`Audio received, ${audioData.byteLength} bytes`);
         resolve(Buffer.from(audioData));
       };
 
@@ -111,7 +110,7 @@ export class AudioRecorder {
 
         ipcMain.removeListener('audio-data-ready', handler);
         if (this.isRecording || this.isStopping) {
-          debugLog('[AudioRecorder] Recording timeout, resetting state');
+          debugLog('Recording timeout, resetting state');
           this.isRecording = false;
           this.isStopping = false;
           this.pendingStopPromise = null;

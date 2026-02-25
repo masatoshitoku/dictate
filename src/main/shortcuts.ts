@@ -1,11 +1,9 @@
-import { globalShortcut, app } from 'electron';
+import { globalShortcut } from 'electron';
 import type { ShortcutSettings } from '../shared/types';
 import { DEFAULT_SHORTCUTS } from '../shared/types';
+import { createLogger } from './utils/logger';
 
-function debugLog(msg: string): void {
-  if (app.isPackaged) return;
-  try { console.log(`[shortcuts] ${msg}`); } catch { /* EPIPE */ }
-}
+const debugLog = createLogger('shortcuts');
 
 type ShortcutCallback = () => void;
 
