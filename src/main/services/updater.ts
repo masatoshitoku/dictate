@@ -58,7 +58,7 @@ function checkForUpdatesIfNeeded(): void {
       if (result.response === 0) {
         autoUpdater.downloadUpdate();
       }
-    });
+    }).catch(() => { /* dialog dismissed */ });
   });
 
   autoUpdater.on('update-not-available', () => {
@@ -75,7 +75,7 @@ function checkForUpdatesIfNeeded(): void {
       if (result.response === 0) {
         autoUpdater.quitAndInstall();
       }
-    });
+    }).catch(() => { /* dialog dismissed */ });
   });
 
   autoUpdater.on('error', (error) => {
@@ -83,7 +83,7 @@ function checkForUpdatesIfNeeded(): void {
     if (msg.includes('net::') || msg.includes('ENOTFOUND')) {
       debugLog('Network error, will retry later');
     } else {
-      console.error('Auto-updater error:', msg);
+      debugLog(`Auto-updater error: ${msg}`);
     }
   });
 

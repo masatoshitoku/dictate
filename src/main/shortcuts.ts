@@ -1,6 +1,11 @@
-import { globalShortcut } from 'electron';
+import { globalShortcut, app } from 'electron';
 import type { ShortcutSettings } from '../shared/types';
 import { DEFAULT_SHORTCUTS } from '../shared/types';
+
+function debugLog(msg: string): void {
+  if (app.isPackaged) return;
+  try { console.log(`[shortcuts] ${msg}`); } catch { /* EPIPE */ }
+}
 
 type ShortcutCallback = () => void;
 
@@ -25,9 +30,9 @@ class ShortcutManager {
 
     if (success) {
       this.registeredShortcuts.set(accelerator, callback);
-      console.log(`Shortcut registered: ${accelerator}`);
+      debugLog(`Shortcut registered: ${accelerator}`);
     } else {
-      console.error(`Failed to register shortcut: ${accelerator}`);
+      debugLog(`Failed to register shortcut: ${accelerator}`);
     }
 
     return success;
@@ -37,14 +42,14 @@ class ShortcutManager {
     if (this.registeredShortcuts.has(accelerator)) {
       globalShortcut.unregister(accelerator);
       this.registeredShortcuts.delete(accelerator);
-      console.log(`Shortcut unregistered: ${accelerator}`);
+      debugLog(`Shortcut unregistered: ${accelerator}`);
     }
   }
 
   unregisterAll(): void {
     globalShortcut.unregisterAll();
     this.registeredShortcuts.clear();
-    console.log('All shortcuts unregistered');
+    debugLog('All shortcuts unregistered');
   }
 
   isRegistered(accelerator: string): boolean {
@@ -67,7 +72,7 @@ class ShortcutManager {
     if (this.isPaused) return;
     this.isPaused = true;
     globalShortcut.unregisterAll();
-    console.log('Shortcuts paused');
+    debugLog('Shortcuts paused');
   }
 
   resume(): void {
@@ -80,12 +85,12 @@ class ShortcutManager {
     if (this.callbacks.onOpenSettings) {
       this.register(this.currentSettings.openSettings, this.callbacks.onOpenSettings);
     }
-    console.log('Shortcuts resumed');
+    debugLog('Shortcuts resumed');
   }
 
   updateShortcuts(settings: ShortcutSettings): boolean {
     if (!this.callbacks) {
-      console.error('Callbacks not set');
+      debugLog('Callbacks not set');
       return false;
     }
 

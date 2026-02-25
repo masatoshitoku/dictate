@@ -34,13 +34,13 @@ export function computeBarHeight(level: number, bellWeight: number): number {
 export function computeAudioLevels(dataArray: Uint8Array, barCount: number): number[] {
   const levels = new Array<number>(barCount);
   const len = dataArray.length;
+  if (len === 0) {
+    levels.fill(AUDIO_LEVEL_FLOOR);
+    return levels;
+  }
   for (let i = 0; i < barCount; i++) {
-    if (len === 0) {
-      levels[i] = AUDIO_LEVEL_FLOOR;
-    } else {
-      const idx = Math.floor((i / barCount) * len);
-      levels[i] = Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
-    }
+    const idx = Math.floor((i / barCount) * len);
+    levels[i] = Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
   }
   return levels;
 }
@@ -51,12 +51,14 @@ export function computeAudioLevels(dataArray: Uint8Array, barCount: number): num
  */
 export function computeAudioLevelsInto(dataArray: Uint8Array, barCount: number, out: number[]): void {
   const len = dataArray.length;
-  for (let i = 0; i < barCount; i++) {
-    if (len === 0) {
+  if (len === 0) {
+    for (let i = 0; i < barCount; i++) {
       out[i] = AUDIO_LEVEL_FLOOR;
-    } else {
-      const idx = Math.floor((i / barCount) * len);
-      out[i] = Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
     }
+    return;
+  }
+  for (let i = 0; i < barCount; i++) {
+    const idx = Math.floor((i / barCount) * len);
+    out[i] = Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
   }
 }

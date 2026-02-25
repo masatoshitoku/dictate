@@ -243,6 +243,8 @@ async function toggleRecording(): Promise<void> {
       if (result.response === 0) {
         createSettingsWindow();
       }
+    }).catch((error: unknown) => {
+      debugLog(`Dialog error: ${error instanceof Error ? error.message : 'Unknown'}`);
     });
     return;
   }
@@ -325,6 +327,7 @@ async function stopRecording(): Promise<void> {
   }
 
   stopPromise = (async () => {
+    let errorSent = false;
     try {
       safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
@@ -333,7 +336,6 @@ async function stopRecording(): Promise<void> {
       // Skip if audio is too short (likely no real speech)
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
         debugLog('Audio too short, skipping transcription');
-
         targetWindow.hide();
         return;
       }
@@ -345,7 +347,6 @@ async function stopRecording(): Promise<void> {
       debugLog(`Transcription completed: "${transcribedText}"`);
 
       // Hide window before typing
-
       targetWindow.hide();
 
       // Skip if no speech detected
@@ -369,6 +370,7 @@ async function stopRecording(): Promise<void> {
       await processTranscription(formattedText);
 
     } catch (error: unknown) {
+      errorSent = true;
       const message = error instanceof Error ? error.message : 'Unknown error';
       debugLog(`Recording error: ${message}`);
 
@@ -381,6 +383,9 @@ async function stopRecording(): Promise<void> {
       isRecording = false;
       stopPromise = null;
       trayManager.setRecordingState(false, getTrayConfig());
+      if (!errorSent) {
+        safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
+      }
     }
   })();
 
@@ -391,24 +396,28 @@ async function cancelRecording(): Promise<void> {
   const targetWindow = mainWindow;
   if (!targetWindow) return;
 
-  if (isRecording || stopPromise) {
-    // Stop the audio recorder
+  if (stopPromise) {
+    // A stop is already in-flight — await it to avoid racing on audioRecorder
+    try {
+      await stopPromise;
+    } catch {
+      // Ignore errors from the in-flight stop
+    }
+  } else if (isRecording) {
+    // Active recording with no stop in-flight — stop recorder and discard
     try {
       await audioRecorder.stopRecording();
     } catch {
       // Ignore errors during cancel
     }
-
-    safeSend(targetWindow, IPC_CHANNELS.CANCEL_RECORDING);
     isRecording = false;
-    stopPromise = null;
     trayManager.setRecordingState(false, getTrayConfig());
-    debugLog('Recording cancelled');
   }
 
+  safeSend(targetWindow, IPC_CHANNELS.CANCEL_RECORDING);
   safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
-
   targetWindow.hide();
+  debugLog('Recording cancelled');
 }
 
 // ============================================================================
@@ -763,4 +772,18 @@ app.on('before-quit', () => {
   shortcutManager.unregisterAll();
   trayManager.destroy();
   audioRecorder.cleanup();
+});
+
+// ============================================================================
+// Global Error Handlers
+// ============================================================================
+
+process.on('uncaughtException', (error: Error) => {
+  debugLog(`Uncaught exception: ${error.message}`);
+  // Let the app continue for non-fatal errors
+});
+
+process.on('unhandledRejection', (reason: unknown) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  debugLog(`Unhandled rejection: ${message}`);
 });

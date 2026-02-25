@@ -1,7 +1,13 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow, ipcMain, app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+/** Suppress debug logs in production builds to avoid info leakage. */
+function debugLog(msg: string): void {
+  if (app.isPackaged) return;
+  try { console.log(msg); } catch { /* EPIPE */ }
+}
 
 export interface AudioRecorderConfig {
   sampleRate?: number;
@@ -33,54 +39,46 @@ export class AudioRecorder {
   }
 
   startRecording(): void {
-    console.log('[AudioRecorder] startRecording called');
-    console.log('[AudioRecorder] - mainWindow exists:', !!this.mainWindow);
-    console.log('[AudioRecorder] - mainWindow destroyed:', this.mainWindow?.isDestroyed());
-    console.log('[AudioRecorder] - webContents exists:', !!this.mainWindow?.webContents);
+    debugLog('[AudioRecorder] startRecording called');
 
     if (!this.mainWindow) {
-      console.log('[AudioRecorder] No mainWindow, aborting');
+      debugLog('[AudioRecorder] No mainWindow, aborting');
       return;
     }
 
     // Force reset state if stuck
     if (this.isStopping) {
-      console.log('[AudioRecorder] Forcing reset of isStopping flag');
+      debugLog('[AudioRecorder] Forcing reset of isStopping flag');
       this.isStopping = false;
       this.pendingStopPromise = null;
     }
 
     if (this.isRecording) {
-      console.log('[AudioRecorder] Already recording, ignoring start');
+      debugLog('[AudioRecorder] Already recording, ignoring start');
       return;
     }
 
     this.isRecording = true;
     this.pendingStopPromise = null;
     this.currentRecordingId++; // New recording session
-    console.log(`[AudioRecorder] New recording session ID: ${this.currentRecordingId}`);
+    debugLog(`[AudioRecorder] New session ID: ${this.currentRecordingId}`);
 
-    console.log('[AudioRecorder] Sending start-audio-capture to renderer...');
     this.mainWindow.webContents.send('start-audio-capture');
-    console.log('[AudioRecorder] Recording started, isRecording=true');
+    debugLog('[AudioRecorder] Recording started');
   }
 
   stopRecording(): Promise<Buffer> {
-    console.log(`[AudioRecorder] stopRecording called`);
-    console.log(`[AudioRecorder] - isRecording: ${this.isRecording}`);
-    console.log(`[AudioRecorder] - isStopping: ${this.isStopping}`);
-    console.log(`[AudioRecorder] - mainWindow exists: ${!!this.mainWindow}`);
-    console.log(`[AudioRecorder] - mainWindow destroyed: ${this.mainWindow?.isDestroyed()}`);
+    debugLog('[AudioRecorder] stopRecording called');
 
     // If already stopping, return the pending promise
     if (this.isStopping && this.pendingStopPromise) {
-      console.log('[AudioRecorder] Already stopping, returning pending promise');
+      debugLog('[AudioRecorder] Already stopping, returning pending promise');
       return this.pendingStopPromise;
     }
 
     this.pendingStopPromise = new Promise((resolve, reject) => {
       if (!this.isRecording || !this.mainWindow) {
-        console.log(`[AudioRecorder] Cannot stop: isRecording=${this.isRecording}, hasWindow=${!!this.mainWindow}`);
+        debugLog(`[AudioRecorder] Cannot stop: isRecording=${this.isRecording}, hasWindow=${!!this.mainWindow}`);
         // Reset state to prevent stuck state
         this.isRecording = false;
         this.isStopping = false;
@@ -90,40 +88,33 @@ export class AudioRecorder {
       }
 
       this.isStopping = true;
-      const recordingIdAtStop = this.currentRecordingId; // Capture ID at stop time
-      console.log(`[AudioRecorder] Setting up audio-data-ready handler for session ${recordingIdAtStop}...`);
+      const recordingIdAtStop = this.currentRecordingId;
+      debugLog(`[AudioRecorder] Waiting for audio data (session ${recordingIdAtStop})`);
 
       const handler = (_event: Electron.IpcMainEvent, audioData: ArrayBuffer) => {
-        console.log(`[AudioRecorder] audio-data-ready received for session ${recordingIdAtStop}!`);
         ipcMain.removeListener('audio-data-ready', handler);
         this.isRecording = false;
         this.isStopping = false;
         this.pendingStopPromise = null;
-        console.log(`[AudioRecorder] Audio received, ${audioData.byteLength} bytes`);
+        debugLog(`[AudioRecorder] Audio received, ${audioData.byteLength} bytes`);
         resolve(Buffer.from(audioData));
       };
 
       ipcMain.once('audio-data-ready', handler);
-      console.log('[AudioRecorder] Sending stop-audio-capture to renderer...');
       this.mainWindow.webContents.send('stop-audio-capture');
-      console.log('[AudioRecorder] stop-audio-capture sent, waiting for audio data...');
 
       setTimeout(() => {
-        console.log(`[AudioRecorder] Timeout check for session ${recordingIdAtStop} - current session: ${this.currentRecordingId}, isRecording: ${this.isRecording}, isStopping: ${this.isStopping}`);
-
         // Only timeout if this is still the same recording session
         if (recordingIdAtStop !== this.currentRecordingId) {
-          console.log(`[AudioRecorder] Ignoring timeout for old session ${recordingIdAtStop}, current is ${this.currentRecordingId}`);
           return;
         }
 
         ipcMain.removeListener('audio-data-ready', handler);
         if (this.isRecording || this.isStopping) {
-          console.log('[AudioRecorder] Recording timeout, resetting state');
+          debugLog('[AudioRecorder] Recording timeout, resetting state');
           this.isRecording = false;
           this.isStopping = false;
           this.pendingStopPromise = null;
-          // Notify main process to sync its state
           if (this.onTimeoutCallback) {
             this.onTimeoutCallback();
           }

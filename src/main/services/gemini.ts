@@ -1,6 +1,7 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { promises as fs } from 'fs';
 import * as path from 'path';
+import { app } from 'electron';
 
 // ============================================================================
 // Constants
@@ -200,7 +201,7 @@ export class GeminiService {
 
         // Log retry attempt (only in development)
         if (attempt < MAX_RETRIES) {
-          console.log(`Transcription attempt ${attempt} failed, retrying in ${RETRY_DELAY_MS}ms...`);
+          if (!app.isPackaged) console.log(`Transcription attempt ${attempt} failed, retrying in ${RETRY_DELAY_MS}ms...`);
           await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
         }
       }
