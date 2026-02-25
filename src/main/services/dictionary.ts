@@ -49,8 +49,7 @@ export class DictionaryService {
       usageCount: 0,
     };
 
-    entries.push(entry);
-    store.set('entries', entries);
+    store.set('entries', [...entries, entry]);
     return entry;
   }
 

@@ -28,8 +28,7 @@ export class HistoryService {
       createdAt: Date.now(),
     };
 
-    entries.push(entry);
-    store.set('entries', entries);
+    store.set('entries', [...entries, entry]);
     return entry;
   }
 

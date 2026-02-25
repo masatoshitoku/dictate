@@ -18,6 +18,6 @@
     "rootDir": "./src",
     "declaration": false
   },
-  "include": ["src/preload/**/*"],
+  "include": ["src/preload/**/*", "src/shared/**/*"],
   "exclude": ["node_modules"]
 }

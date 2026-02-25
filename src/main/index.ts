@@ -703,6 +703,20 @@ async function initialize(): Promise<void> {
 // ============================================================================
 
 app.whenReady().then(() => {
+  // Enforce CSP via response headers (supplements the <meta> tag in index.html).
+  // This ensures CSP is active even in development (Vite dev server) where the
+  // HTML <meta> CSP may be bypassed.
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';",
+        ],
+      },
+    });
+  });
+
   // Permission check: reflect actual macOS TCC status so Chromium doesn't
   // bypass TCC by assuming permission is already granted.
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {

@@ -1,109 +1,18 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type {
+  AppSettings,
+  TranscriptionResult,
+  DictionaryEntry,
+  TranscriptionHistoryEntry,
+  ApiKeyValidationResult,
+  ShortcutSettings,
+  RecordingState,
+} from '../shared/types';
+import { IPC_CHANNELS } from '../shared/types';
 
 console.log('[preload] Script starting...');
 
-// IPC Channel Constants - duplicated here to avoid module resolution issues in sandbox
-const IPC_CHANNELS = {
-  // Recording
-  START_RECORDING: 'start-recording',
-  STOP_RECORDING: 'stop-recording',
-  TOGGLE_RECORDING: 'toggle-recording',
-  CANCEL_RECORDING: 'cancel-recording',
-
-  // Settings
-  GET_SETTINGS: 'get-settings',
-  SAVE_SETTINGS: 'save-settings',
-  CHECK_ACCESSIBILITY: 'check-accessibility',
-
-  // API Key
-  SAVE_API_KEY: 'save-api-key',
-  HAS_API_KEY: 'has-api-key',
-  GET_MASKED_API_KEY: 'get-masked-api-key',
-  VALIDATE_API_KEY: 'validate-api-key',
-  IS_ENCRYPTION_AVAILABLE: 'is-encryption-available',
-
-  // Dictionary
-  GET_DICTIONARY: 'get-dictionary',
-  GET_DICTIONARY_BY_CATEGORY: 'get-dictionary-by-category',
-  SEARCH_DICTIONARY: 'search-dictionary',
-  ADD_DICTIONARY_ENTRY: 'add-dictionary-entry',
-  UPDATE_DICTIONARY_ENTRY: 'update-dictionary-entry',
-  DELETE_DICTIONARY_ENTRY: 'delete-dictionary-entry',
-
-  // History
-  GET_HISTORY: 'get-history',
-  SEARCH_HISTORY: 'search-history',
-  DELETE_HISTORY_ENTRY: 'delete-history-entry',
-  DELETE_ALL_HISTORY: 'delete-all-history',
-
-  // Window
-  OPEN_SETTINGS: 'open-settings',
-  CLOSE_SETTINGS: 'close-settings',
-
-  // Shortcuts
-  GET_SHORTCUTS: 'get-shortcuts',
-  SAVE_SHORTCUTS: 'save-shortcuts',
-  PAUSE_SHORTCUTS: 'pause-shortcuts',
-  RESUME_SHORTCUTS: 'resume-shortcuts',
-
-  // Events (Main -> Renderer)
-  STATUS_CHANGED: 'status-changed',
-  TRANSCRIPTION_RESULT: 'transcription-result',
-  ERROR: 'error',
-  START_AUDIO_CAPTURE: 'start-audio-capture',
-  STOP_AUDIO_CAPTURE: 'stop-audio-capture',
-  AUDIO_DATA_READY: 'audio-data-ready',
-
-  // Permission
-  CHECK_MICROPHONE_PERMISSION: 'check-microphone-permission',
-} as const;
-
-// Type definitions for preload
-interface AppSettings {
-  hotkey: string;
-  recordingMode: 'push-to-talk' | 'toggle';
-  typingSpeed: 'instant' | 'fast' | 'natural';
-  language: 'ja' | 'en' | 'auto';
-  autoLaunch: boolean;
-  showInMenuBar: boolean;
-  shortcuts: ShortcutSettings;
-}
-
-interface TranscriptionResult {
-  originalText: string;
-  formattedText: string;
-  confidence?: number;
-  duration: number;
-}
-
-interface DictionaryEntry {
-  id: string;
-  reading: string;
-  word: string;
-  category: 'auto' | 'manual';
-  createdAt: number;
-  usageCount: number;
-}
-
-interface TranscriptionHistoryEntry {
-  id: string;
-  originalText: string;
-  formattedText: string;
-  createdAt: number;
-}
-
-interface ApiKeyValidationResult {
-  valid: boolean;
-  error?: string;
-}
-
-interface ShortcutSettings {
-  toggleRecording: string;
-  cancelRecording: string;
-  openSettings: string;
-}
-
-type RecordingStatus = 'idle' | 'recording' | 'processing' | 'typing' | 'error';
+type RecordingStatus = RecordingState['status'];
 
 export interface ElectronAPI {
   // Recording
