@@ -140,6 +140,35 @@ describe('computeAudioLevels', () => {
     const levels = computeAudioLevels(data, 0);
     expect(levels).toHaveLength(0);
   });
+
+  // Boundary tests
+  it('all values are finite numbers (no NaN/Infinity)', () => {
+    const data = new Uint8Array([0, 255, 128, 1, 254, 0, 127, 64]);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels.every(l => Number.isFinite(l))).toBe(true);
+  });
+
+  it('values are always between floor and 1.0', () => {
+    const data = new Uint8Array(16);
+    // Fill with random-ish values
+    for (let i = 0; i < 16; i++) data[i] = (i * 37) % 256;
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels.every(l => l >= AUDIO_LEVEL_FLOOR && l <= 1.0)).toBe(true);
+  });
+
+  it('handles large data array', () => {
+    const data = new Uint8Array(1024).fill(180);
+    const levels = computeAudioLevels(data, BAR_COUNT);
+    expect(levels).toHaveLength(BAR_COUNT);
+    expect(levels.every(l => l === 180 / 255)).toBe(true);
+  });
+
+  it('handles single bar', () => {
+    const data = new Uint8Array([200, 100, 50]);
+    const levels = computeAudioLevels(data, 1);
+    expect(levels).toHaveLength(1);
+    expect(levels[0]).toBe(200 / 255); // Maps to index 0
+  });
 });
 
 describe('computeAudioLevelsInto', () => {

@@ -238,17 +238,27 @@ export default function App() {
   }, [setStatus, setLastTranscription, setError, cleanupRecording, initGlobalStream, resetAudioState]);
 
   const handleCancel = () => {
-    window.electronAPI.cancelRecording();
+    window.electronAPI.cancelRecording().catch(() => {
+      // IPC failure during cancel — renderer cleanup already handled by cleanupRecording
+    });
   };
 
   const handleConfirm = async () => {
     if (isRecording) {
-      await window.electronAPI.stopRecording();
+      try {
+        await window.electronAPI.stopRecording();
+      } catch {
+        setError('録音の停止に失敗しました');
+      }
     }
   };
 
   const handleToggle = async () => {
-    await window.electronAPI.toggleRecording();
+    try {
+      await window.electronAPI.toggleRecording();
+    } catch {
+      setError('録音の切り替えに失敗しました');
+    }
   };
 
   return (

@@ -34,7 +34,7 @@ export function saveApiKey(apiKey: string): boolean {
     }
     return true;
   } catch (error) {
-    console.error('Failed to save API key:', error);
+    if (!app.isPackaged) console.error('Failed to save API key:', error);
     return false;
   }
 }
@@ -63,7 +63,7 @@ export function getApiKey(): string | null {
       return plainKey;
     }
   } catch (error) {
-    console.error('Failed to retrieve API key:', error);
+    if (!app.isPackaged) console.error('Failed to retrieve API key:', error);
   }
 
   return null;

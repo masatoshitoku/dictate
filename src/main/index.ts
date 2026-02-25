@@ -112,11 +112,21 @@ function loadWindowURL(targetWindow: BrowserWindow, hash?: string): void {
 }
 
 /**
- * Show error notification via renderer
+ * Show error notification via renderer.
+ * Guards against destroyed webContents (e.g. window closed during async operation).
  */
 function notifyError(window: BrowserWindow | null, message: string): void {
   if (window && !window.isDestroyed()) {
     window.webContents.send(IPC_CHANNELS.ERROR, message);
+  }
+}
+
+/**
+ * Safely send IPC message to a window, guarding against destroyed webContents.
+ */
+function safeSend(window: BrowserWindow | null, channel: string, ...args: unknown[]): void {
+  if (window && !window.isDestroyed()) {
+    window.webContents.send(channel, ...args);
   }
 }
 
@@ -179,11 +189,10 @@ function createWindow(): void {
     isRecording = false;
     stopPromise = null;
     trayManager.setRecordingState(false, getTrayConfig());
+    // Tell renderer to cancel/cleanup its recording state
+    safeSend(mainWindow, IPC_CHANNELS.CANCEL_RECORDING);
+    safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
     if (mainWindow && !mainWindow.isDestroyed()) {
-      // Tell renderer to cancel/cleanup its recording state
-      mainWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
-      mainWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
-
       mainWindow.hide();
     }
   });
@@ -267,7 +276,7 @@ async function startRecording(): Promise<void> {
   if (isRecording || !mainWindow) return;
 
   try {
-    mainWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'recording');
+    safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'recording');
     audioRecorder.startRecording();
     isRecording = true;
     trayManager.setRecordingState(true, getTrayConfig());
@@ -276,7 +285,7 @@ async function startRecording(): Promise<void> {
     const message = error instanceof Error ? error.message : 'Unknown error';
     debugLog(`Failed to start recording: ${message}`);
     notifyError(mainWindow, 'Failed to start recording. Please check microphone permissions.');
-    mainWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'error');
+    safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
   }
 }
 
@@ -317,7 +326,7 @@ async function stopRecording(): Promise<void> {
 
   stopPromise = (async () => {
     try {
-      targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'processing');
+      safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
       debugLog('Stopping recording...');
       const audioBuffer = await audioRecorder.stopRecording();
@@ -365,7 +374,7 @@ async function stopRecording(): Promise<void> {
 
       // Show error to user
       notifyError(targetWindow, 'Transcription failed');
-      targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'error');
+      safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
 
       targetWindow.hide();
     } finally {
@@ -390,14 +399,14 @@ async function cancelRecording(): Promise<void> {
       // Ignore errors during cancel
     }
 
-    targetWindow.webContents.send(IPC_CHANNELS.CANCEL_RECORDING);
+    safeSend(targetWindow, IPC_CHANNELS.CANCEL_RECORDING);
     isRecording = false;
     stopPromise = null;
     trayManager.setRecordingState(false, getTrayConfig());
     debugLog('Recording cancelled');
   }
 
-  targetWindow.webContents.send(IPC_CHANNELS.STATUS_CHANGED, 'idle');
+  safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
 
   targetWindow.hide();
 }
@@ -441,6 +450,23 @@ function safeHandle(channel: string, handler: (...args: any[]) => unknown): void
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       throw new Error(`${channel} failed: ${message}`);
+    }
+  });
+}
+
+/**
+ * Register an IPC handler that returns a fallback value on error instead of throwing.
+ * Used for handlers where the renderer expects a value (not an exception) on failure.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- IPC args are untyped at the process boundary
+function safeHandleSoft<T>(channel: string, fallback: T, handler: (...args: any[]) => unknown): void {
+  ipcMain.handle(channel, async (_event, ...args) => {
+    try {
+      return await handler(...args);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      debugLog(`${channel} failed (returning fallback): ${message}`);
+      return fallback;
     }
   });
 }
@@ -495,24 +521,13 @@ function setupIPC(): void {
   safeHandle(IPC_CHANNELS.HAS_API_KEY, () => hasApiKey());
   safeHandle(IPC_CHANNELS.GET_MASKED_API_KEY, () => getMaskedApiKey());
 
-  // Validate API key — returns error object instead of throwing
-  ipcMain.handle(IPC_CHANNELS.VALIDATE_API_KEY, async (_event, apiKey: string) => {
-    try {
-      return await validateApiKey(apiKey);
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return { valid: false, error: `Validation failed: ${message}` };
-    }
-  });
+  // Validate API key — returns error object on failure (renderer checks .valid)
+  safeHandleSoft(IPC_CHANNELS.VALIDATE_API_KEY, { valid: false, error: 'Validation failed' },
+    (apiKey: string) => validateApiKey(apiKey));
 
-  // Encryption check — returns false on error instead of throwing
-  ipcMain.handle(IPC_CHANNELS.IS_ENCRYPTION_AVAILABLE, () => {
-    try {
-      return isEncryptionAvailable();
-    } catch {
-      return false;
-    }
-  });
+  // Encryption check — returns false on error
+  safeHandleSoft(IPC_CHANNELS.IS_ENCRYPTION_AVAILABLE, false,
+    () => isEncryptionAvailable());
 
   // Shortcuts
   safeHandle(IPC_CHANNELS.GET_SHORTCUTS, () => {
@@ -528,13 +543,9 @@ function setupIPC(): void {
     return success;
   });
 
-  // Pause/resume — return false on error instead of throwing
-  ipcMain.handle(IPC_CHANNELS.PAUSE_SHORTCUTS, () => {
-    try { shortcutManager.pause(); return true; } catch { return false; }
-  });
-  ipcMain.handle(IPC_CHANNELS.RESUME_SHORTCUTS, () => {
-    try { shortcutManager.resume(); return true; } catch { return false; }
-  });
+  // Pause/resume — return false on error
+  safeHandleSoft(IPC_CHANNELS.PAUSE_SHORTCUTS, false, () => { shortcutManager.pause(); return true; });
+  safeHandleSoft(IPC_CHANNELS.RESUME_SHORTCUTS, false, () => { shortcutManager.resume(); return true; });
 
   // Permission check
   safeHandle(IPC_CHANNELS.CHECK_MICROPHONE_PERMISSION, () => {

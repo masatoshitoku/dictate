@@ -18,6 +18,12 @@ export default defineConfig({
         'src/main/**/*', // Electron main process needs different testing approach
         'src/preload/**/*',
       ],
+      thresholds: {
+        // Enforce minimum coverage for shared modules (testable without Electron)
+        branches: 70,
+        functions: 70,
+        lines: 70,
+      },
     },
   },
 });
