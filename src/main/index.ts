@@ -762,21 +762,49 @@ async function requestMicrophonePermission(): Promise<boolean> {
     return false;
   }
 
-  // not-determined: Show the macOS permission dialog ONCE.
-  // On macOS 26, askForMediaAccess() shows the dialog but returns false immediately
-  // without waiting for the user's response. We fire-and-forget, then the user
-  // grants/denies in the dialog, and checkMicrophonePermission() picks up the new status.
+  // not-determined: Show the macOS permission dialog.
+  // On macOS 26 Tahoe beta, askForMediaAccess() requires the app to have a
+  // visible, focused window before the TCC dialog appears.
   if (!hasRequestedMicPermission) {
     hasRequestedMicPermission = true;
-    debugLog('Requesting microphone permission via askForMediaAccess (fire-and-forget)...');
-    systemPreferences.askForMediaAccess('microphone').then(result => {
-      debugLog(`askForMediaAccess resolved: ${result}`);
-    });
+
+    // Temporarily show the main window and bring app to foreground.
+    // This is required on macOS 26 Tahoe beta for the TCC dialog to appear.
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      app.focus({ steal: true });
+      // Brief delay to ensure the window is fully visible before requesting
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
+    debugLog('Requesting microphone permission via askForMediaAccess...');
+    const result = await systemPreferences.askForMediaAccess('microphone');
+    debugLog(`askForMediaAccess resolved: ${result}`);
+
+    const newStatus = systemPreferences.getMediaAccessStatus('microphone');
+    debugLog(`TCC status after askForMediaAccess: ${newStatus}`);
+
+    if (result || (newStatus as string) === 'granted') {
+      microphonePermissionGranted = true;
+      microphonePermissionChecked = true;
+      // Hide the window again after permission granted
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.hide();
+      }
+      return true;
+    }
+
+    // macOS 26 Tahoe beta bug: dialog still didn't appear.
+    // Open System Settings as fallback for manual grant.
+    if (newStatus !== 'granted') {
+      debugLog('Opening System Settings (Microphone) for manual permission grant');
+      shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+    }
   }
 
   microphonePermissionGranted = false;
   microphonePermissionChecked = true;
-  return false; // Not granted yet - user needs to respond to the dialog
+  return false;
 }
 
 function checkMicrophonePermission(): boolean {
@@ -880,7 +908,9 @@ app.whenReady().then(() => {
     return true;
   });
 
-  // Permission request: when Chromium asks (e.g. getUserMedia), trigger macOS TCC dialog.
+  // Permission request: when Chromium asks (e.g. getUserMedia), grant it.
+  // The actual TCC dialog is handled by requestMicrophonePermission() at startup.
+  // Here we just ensure Chromium doesn't block the audio stream.
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
       const status = systemPreferences.getMediaAccessStatus('microphone');
@@ -889,26 +919,9 @@ app.whenReady().then(() => {
         callback(false);
         return;
       }
-      if (status !== 'granted') {
-        // AWAIT askForMediaAccess so the TCC entry is created before proceeding.
-        // On macOS 26 Tahoe beta this may return false immediately,
-        // in which case open System Settings so the user can grant manually.
-        systemPreferences.askForMediaAccess('microphone').then(result => {
-          debugLog(`askForMediaAccess resolved: ${result}`);
-          const newStatus = systemPreferences.getMediaAccessStatus('microphone');
-          debugLog(`TCC status after askForMediaAccess: ${newStatus}`);
-          if (!result && newStatus !== 'granted') {
-            // macOS 26 bug: dialog didn't appear - open System Settings
-            debugLog('Opening System Settings (Microphone) for manual permission grant');
-            shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
-          }
-          callback(true);
-        }).catch(() => {
-          callback(true);
-        });
-      } else {
-        callback(true);
-      }
+      // Grant Chromium-level permission. The OS TCC check happens at the
+      // AVFoundation level regardless of what we return here.
+      callback(true);
     } else {
       callback(true);
     }
@@ -917,11 +930,10 @@ app.whenReady().then(() => {
   initialize();
 });
 
-// Disable DevTools in production
+// Block DevTools keyboard shortcuts in production (but allow programmatic opening for debugging)
 app.on('web-contents-created', (_, contents) => {
   if (app.isPackaged) {
     contents.on('before-input-event', (event, input) => {
-      // Block DevTools shortcuts
       if (input.type === 'keyDown') {
         const isDevToolsShortcut =
           (input.control && input.shift && input.key === 'I') ||
@@ -931,10 +943,6 @@ app.on('web-contents-created', (_, contents) => {
           event.preventDefault();
         }
       }
-    });
-    // Prevent DevTools from being opened programmatically
-    contents.on('devtools-opened', () => {
-      contents.closeDevTools();
     });
   }
 });

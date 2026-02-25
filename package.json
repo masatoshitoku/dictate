@@ -62,7 +62,7 @@
     "zustand": "^4.4.7"
   },
   "build": {
-    "appId": "com.dictate.app",
+    "appId": "io.dictate.app",
     "productName": "Dictate",
     "publish": {
       "provider": "github",
