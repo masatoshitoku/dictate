@@ -28,9 +28,9 @@ import {
 // Constants
 // ============================================================================
 
-const WINDOW_WIDTH = 200;
-const WINDOW_HEIGHT = 56;
-const WINDOW_BOTTOM_MARGIN = 100;
+const WINDOW_WIDTH = 176;
+const WINDOW_HEIGHT = 48;
+const WINDOW_BOTTOM_MARGIN = 40;
 const SETTINGS_WINDOW_WIDTH = 800;
 const SETTINGS_WINDOW_HEIGHT = 600;
 const SETTINGS_WINDOW_MIN_WIDTH = 600;
@@ -148,7 +148,7 @@ function createWindow(): void {
     transparent: true,
     alwaysOnTop: true,
     skipTaskbar: true,
-    hasShadow: true,
+    hasShadow: false,
     focusable: false,
     webPreferences: getDefaultWebPreferences(),
     show: false,

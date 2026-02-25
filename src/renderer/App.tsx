@@ -370,25 +370,21 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex items-center justify-center bg-transparent">
-      <div className={`flex items-center gap-[10px] rounded-[14px] px-[10px] border transition-all duration-300 h-[52px] shadow-[0_2px_4px_rgba(0,0,0,0.5),0_8px_24px_rgba(0,0,0,0.6),0_20px_48px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.04)] ${
-        isRecording
-          ? 'bg-[rgba(10,10,12,0.91)] border-[rgba(200,170,100,0.18)]'
-          : 'bg-[rgba(10,10,12,0.91)] border-[rgba(255,255,255,0.07)]'
-      }`}>
+      <div className="flex items-center gap-[8px] rounded-[12px] px-[8px] transition-all duration-300 h-[44px] bg-[rgba(10,10,12,0.91)]">
         {/* Cancel button */}
         <button
           onClick={handleCancel}
-          className="w-9 h-9 rounded-[9px] bg-transparent hover:bg-white/[0.05] flex items-center justify-center transition-all duration-150 border border-white/[0.07] hover:border-white/[0.15] active:scale-95 flex-shrink-0"
+          className="w-8 h-8 rounded-[8px] bg-transparent hover:bg-white/[0.05] flex items-center justify-center transition-all duration-150 border border-white/[0.07] hover:border-white/[0.15] active:scale-95 flex-shrink-0"
           title="Cancel"
         >
-          <svg className="w-[14px] h-[14px] text-white/[0.28]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className="w-[12px] h-[12px] text-white/[0.28]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
 
         {/* Waveform visualization */}
         <div
-          className="flex items-center gap-[3px] flex-1 h-9 cursor-pointer justify-center"
+          className="flex items-center gap-[3px] flex-1 h-8 cursor-pointer justify-center"
           onClick={handleToggle}
         >
           {isProcessing || isTyping ? (
@@ -400,19 +396,23 @@ export default function App() {
               <div className="w-1 h-1 bg-white/[0.04] rounded-full" />
             </div>
           ) : (
-            audioLevels.map((level, i) => (
-              <div
-                key={i}
-                className={`w-[2px] rounded-[1px] transition-all duration-75 ${
-                  isRecording
-                    ? 'bg-[#C8AA6E]'
-                    : 'bg-white/[0.18]'
-                }`}
-                style={{
-                  height: `${Math.max(6, level * 32)}px`,
-                }}
-              />
-            ))
+            audioLevels.map((level, i) => {
+              const bell = [0.35, 0.62, 0.85, 1.0, 0.85, 0.62, 0.35][i];
+              const minH = bell * 10;
+              return (
+                <div
+                  key={i}
+                  className={`w-[2px] rounded-[1px] transition-all duration-75 ${
+                    isRecording
+                      ? 'bg-[#C8AA6E]'
+                      : 'bg-white/[0.18]'
+                  }`}
+                  style={{
+                    height: `${Math.max(minH, level * 28 * bell)}px`,
+                  }}
+                />
+              );
+            })
           )}
         </div>
 
@@ -420,14 +420,14 @@ export default function App() {
         <button
           onClick={handleConfirm}
           disabled={!isRecording}
-          className={`w-9 h-9 rounded-[9px] flex items-center justify-center transition-all duration-150 border flex-shrink-0 ${
+          className={`w-8 h-8 rounded-[8px] flex items-center justify-center transition-all duration-150 border flex-shrink-0 ${
             isRecording
               ? 'bg-[rgba(200,170,100,0.08)] border-[rgba(200,170,100,0.55)] hover:bg-[rgba(200,170,100,0.12)] active:scale-95'
               : 'bg-transparent border-white/[0.05] cursor-not-allowed'
           }`}
           title="Confirm"
         >
-          <svg className={`w-[14px] h-[14px] ${isRecording ? 'text-[#C8AA6E]' : 'text-white/[0.12]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className={`w-[12px] h-[12px] ${isRecording ? 'text-[#C8AA6E]' : 'text-white/[0.12]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </button>
