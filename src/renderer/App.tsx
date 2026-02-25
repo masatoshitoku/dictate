@@ -10,6 +10,7 @@ export default function App() {
   const { status, setStatus, setLastTranscription, setError } = useStore();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const currentSessionChunksRef = useRef<Blob[]>([]);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationRef = useRef<number | null>(null);
@@ -41,6 +42,7 @@ export default function App() {
     }
     mediaRecorderRef.current = null;
     audioChunksRef.current = [];
+    currentSessionChunksRef.current = [];
     maxAudioLevelRef.current = 0;
     setAudioLevels(Array(7).fill(0.2));
   }, []);
@@ -223,7 +225,6 @@ export default function App() {
         };
         updateLevels();
 
-        audioChunksRef.current = [];
         console.log('[Renderer] Creating MediaRecorder...');
 
         const mediaRecorder = new MediaRecorder(stream, {
@@ -240,14 +241,15 @@ export default function App() {
           setError('録音中にエラーが発生しました');
         };
 
-        // Capture reference to guard against stale ondataavailable from previous session.
-        // cleanupRecording() sets mediaRecorderRef.current = null synchronously, but
-        // the final ondataavailable fires asynchronously AFTER the ref is cleared.
-        // By checking ref identity we drop any chunk from an old recorder.
-        const thisRecorder = mediaRecorder;
+        // Per-session local array captured in closure.
+        // Each recording session gets its own array, so stale ondataavailable
+        // events from cancelled sessions write to their own old array and
+        // never contaminate the current session's data.
+        const sessionChunks: Blob[] = [];
+        currentSessionChunksRef.current = sessionChunks;
         mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0 && mediaRecorderRef.current === thisRecorder) {
-            audioChunksRef.current.push(event.data);
+          if (event.data.size > 0) {
+            sessionChunks.push(event.data);
           }
         };
 
@@ -293,8 +295,8 @@ export default function App() {
         recorder.onstop = async () => {
           console.log('[Renderer] ====== recorder.onstop fired ======');
           try {
-            console.log('[Renderer] MediaRecorder stopped, chunks:', audioChunksRef.current.length);
-            const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            console.log('[Renderer] MediaRecorder stopped, chunks:', currentSessionChunksRef.current.length);
+            const audioBlob = new Blob(currentSessionChunksRef.current, { type: 'audio/webm' });
             console.log('[Renderer] Audio blob size:', audioBlob.size);
             const arrayBuffer = await audioBlob.arrayBuffer();
             console.log('[Renderer] Sending audio data to main process, size:', arrayBuffer.byteLength);
@@ -315,7 +317,7 @@ export default function App() {
             }
             mediaRecorderRef.current = null;
             analyserRef.current = null;
-            audioChunksRef.current = [];
+            currentSessionChunksRef.current = [];
             maxAudioLevelRef.current = 0;
             setAudioLevels(Array(7).fill(0.2));
             console.log('[Renderer] Cleanup complete');
