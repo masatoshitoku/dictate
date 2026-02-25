@@ -732,23 +732,48 @@ function setupIPC(): void {
 
 let microphonePermissionGranted = false;
 let microphonePermissionChecked = false;
+// Flag to ensure we only call askForMediaAccess() once (prevents infinite dialog loop)
+let hasRequestedMicPermission = false;
 
 async function requestMicrophonePermission(): Promise<boolean> {
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`Microphone permission status: ${status}`);
-  // On macOS 26+, askForMediaAccess() is broken (returns false immediately without dialog).
-  // Permission is handled by the OS when getUserMedia() accesses hardware in the renderer.
-  microphonePermissionGranted = (status === 'granted' || status === 'not-determined');
+
+  if (status === 'granted') {
+    microphonePermissionGranted = true;
+    microphonePermissionChecked = true;
+    return true;
+  }
+
+  if (status === 'denied') {
+    microphonePermissionGranted = false;
+    microphonePermissionChecked = true;
+    return false;
+  }
+
+  // not-determined: Show the macOS permission dialog ONCE.
+  // On macOS 26, askForMediaAccess() shows the dialog but returns false immediately
+  // without waiting for the user's response. We fire-and-forget, then the user
+  // grants/denies in the dialog, and checkMicrophonePermission() picks up the new status.
+  if (!hasRequestedMicPermission) {
+    hasRequestedMicPermission = true;
+    debugLog('Requesting microphone permission via askForMediaAccess (fire-and-forget)...');
+    systemPreferences.askForMediaAccess('microphone').then(result => {
+      debugLog(`askForMediaAccess resolved: ${result}`);
+    });
+  }
+
+  microphonePermissionGranted = false;
   microphonePermissionChecked = true;
-  return microphonePermissionGranted;
+  return false; // Not granted yet - user needs to respond to the dialog
 }
 
 function checkMicrophonePermission(): boolean {
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`checkMicrophonePermission: ${status}`);
-  // Allow renderer to call getUserMedia() for both granted and not-determined.
-  // macOS will show the native dialog when getUserMedia() accesses the hardware.
-  return status === 'granted' || status === 'not-determined';
+  // Only return true when macOS TCC has actually granted permission.
+  // 'not-determined' means the dialog is pending - user hasn't responded yet.
+  return status === 'granted';
 }
 
 // ============================================================================

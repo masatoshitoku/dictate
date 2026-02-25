@@ -72,18 +72,14 @@ export default function App() {
       return streamInitPromise;
     }
 
-    // Already tried and failed/denied (but not due to inactive stream)
-    if (permissionRequested && !globalStream) {
-      return null;
-    }
-
-    // Check if main process has already granted permission
-    // This prevents the renderer from triggering macOS permission dialog
+    // Check if main process has granted permission (only true when macOS TCC status is 'granted')
     const hasPermission = await window.electronAPI.checkMicrophonePermission();
     if (!hasPermission) {
-      console.log('[Dictate] Microphone permission not granted by main process');
-      setError('マイクへのアクセスが許可されていません。システム環境設定で許可してください。');
-      permissionRequested = true;
+      console.log('[Dictate] Microphone permission not yet granted');
+      // Show appropriate message: if this is first time, dialog has been shown by main process.
+      // User needs to click Allow in the macOS permission dialog.
+      setError('マイクの権限ダイアログが表示されています。「許可」をクリックしてから再度お試しください。');
+      // Do NOT set permissionRequested = true here - allow retry after user grants permission
       return null;
     }
 
