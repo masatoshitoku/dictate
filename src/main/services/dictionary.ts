@@ -1,5 +1,6 @@
 import Store from 'electron-store';
 import { DictionaryEntry } from '../../shared/types';
+import { getDictionaryPrompt as formatDictionaryPrompt } from '../../shared/dictionary-utils';
 import { randomUUID } from 'crypto';
 
 interface DictionaryStore {
@@ -118,14 +119,7 @@ export class DictionaryService {
 
   // Get dictionary as formatted string for Gemini prompt
   getDictionaryPrompt(): string {
-    const entries = this.getAll();
-    if (entries.length === 0) return '';
-
-    const lines = entries.map(e => `- "${e.reading}" → "${e.word}"`);
-    return `\n\n## 辞書（参考情報のみ）
-注意: この辞書は音声に含まれている単語の表記を補助するためのものです。
-音声に含まれていない単語を辞書から推測して出力してはいけません。
-\n${lines.join('\n')}`;
+    return formatDictionaryPrompt(this.getAll());
   }
 }
 

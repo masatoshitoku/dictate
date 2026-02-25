@@ -1,39 +1,20 @@
 import { describe, it, expect } from 'vitest';
+import {
+  immutableUpdate,
+  immutableIncrementUsage,
+  immutableAdd,
+  getDictionaryPrompt,
+  type DictionaryEntryLike,
+} from '../shared/dictionary-utils';
 
-// Test immutable update patterns used in DictionaryService.
-// These tests verify the pure logic without electron-store dependency.
+// Tests verify the REAL production functions imported from shared/dictionary-utils.ts.
 
 describe('immutable update pattern', () => {
-  interface Entry {
+  interface Entry extends DictionaryEntryLike {
     id: string;
     reading: string;
     word: string;
     usageCount: number;
-  }
-
-  function immutableUpdate(
-    entries: Entry[],
-    id: string,
-    updates: Partial<Pick<Entry, 'reading' | 'word'>>
-  ): { entries: Entry[]; updated: Entry | null } {
-    const index = entries.findIndex(e => e.id === id);
-    if (index === -1) return { entries, updated: null };
-
-    const updated = { ...entries[index], ...updates };
-    const newEntries = [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
-    return { entries: newEntries, updated };
-  }
-
-  function immutableIncrementUsage(entries: Entry[], id: string): Entry[] {
-    const index = entries.findIndex(e => e.id === id);
-    if (index === -1) return entries;
-
-    const updated = { ...entries[index], usageCount: entries[index].usageCount + 1 };
-    return [...entries.slice(0, index), updated, ...entries.slice(index + 1)];
-  }
-
-  function immutableAdd(entries: Entry[], entry: Entry): Entry[] {
-    return [...entries, entry];
   }
 
   const sampleEntries: Entry[] = [
@@ -150,20 +131,6 @@ describe('immutable update pattern', () => {
 });
 
 describe('getDictionaryPrompt format', () => {
-  interface Entry {
-    reading: string;
-    word: string;
-  }
-
-  function getDictionaryPrompt(entries: Entry[]): string {
-    if (entries.length === 0) return '';
-    const lines = entries.map(e => `- "${e.reading}" → "${e.word}"`);
-    return `\n\n## 辞書（参考情報のみ）
-注意: この辞書は音声に含まれている単語の表記を補助するためのものです。
-音声に含まれていない単語を辞書から推測して出力してはいけません。
-\n${lines.join('\n')}`;
-  }
-
   it('returns empty string for no entries', () => {
     expect(getDictionaryPrompt([])).toBe('');
   });

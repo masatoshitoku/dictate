@@ -762,8 +762,21 @@ app.whenReady().then(() => {
   });
 });
 
-// Block DevTools keyboard shortcuts in production (but allow programmatic opening for debugging)
+// Security: restrict navigation and new window creation on all web contents
 app.on('web-contents-created', (_, contents) => {
+  // Block navigation to external URLs (prevents open redirect / phishing attacks)
+  contents.on('will-navigate', (event, url) => {
+    // Allow file:// (production) and localhost (dev server) only
+    if (!url.startsWith('file://') && !url.startsWith('http://localhost')) {
+      event.preventDefault();
+      debugLog(`Blocked navigation to: ${url}`);
+    }
+  });
+
+  // Block all new window creation (window.open, target=_blank, etc.)
+  contents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+  // Block DevTools keyboard shortcuts in production
   if (app.isPackaged) {
     contents.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown') {

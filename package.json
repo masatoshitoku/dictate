@@ -90,7 +90,7 @@
       ],
       "entitlements": "entitlements.mac.plist",
       "entitlementsInherit": "entitlements.mac.plist",
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
       "extendInfo": {
         "NSMicrophoneUsageDescription": "This app requires microphone access for voice dictation.",
         "NSAppleEventsUsageDescription": "This app requires accessibility access to type text into other applications."

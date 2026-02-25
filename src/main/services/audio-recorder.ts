@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { createLogger } from '../utils/logger';
+import { IPC_CHANNELS } from '../../shared/types';
 
 const debugLog = createLogger('AudioRecorder');
 
@@ -60,7 +61,7 @@ export class AudioRecorder {
     this.currentRecordingId++; // New recording session
     debugLog(`New session ID: ${this.currentRecordingId}`);
 
-    this.mainWindow.webContents.send('start-audio-capture');
+    this.mainWindow.webContents.send(IPC_CHANNELS.START_AUDIO_CAPTURE);
     debugLog('Recording started');
   }
 
@@ -91,7 +92,7 @@ export class AudioRecorder {
       debugLog(`Waiting for audio data (session ${recordingIdAtStop})`);
 
       const handler = (_event: Electron.IpcMainEvent, audioData: ArrayBuffer) => {
-        ipcMain.removeListener('audio-data-ready', handler);
+        ipcMain.removeListener(IPC_CHANNELS.AUDIO_DATA_READY, handler);
         this.isRecording = false;
         this.isStopping = false;
         this.pendingStopPromise = null;
@@ -99,8 +100,8 @@ export class AudioRecorder {
         resolve(Buffer.from(audioData));
       };
 
-      ipcMain.once('audio-data-ready', handler);
-      this.mainWindow.webContents.send('stop-audio-capture');
+      ipcMain.once(IPC_CHANNELS.AUDIO_DATA_READY, handler);
+      this.mainWindow.webContents.send(IPC_CHANNELS.STOP_AUDIO_CAPTURE);
 
       setTimeout(() => {
         // Only timeout if this is still the same recording session
@@ -108,7 +109,7 @@ export class AudioRecorder {
           return;
         }
 
-        ipcMain.removeListener('audio-data-ready', handler);
+        ipcMain.removeListener(IPC_CHANNELS.AUDIO_DATA_READY, handler);
         if (this.isRecording || this.isStopping) {
           debugLog('Recording timeout, resetting state');
           this.isRecording = false;

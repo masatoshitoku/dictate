@@ -1,7 +1,12 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { promises as fs } from 'fs';
-import * as path from 'path';
-import { createLogger } from '../utils/logger';
+import { createLogger, logCriticalError } from '../utils/logger';
+import {
+  getMimeType,
+  createTranscriptionError,
+  parseGeminiError,
+  type TranscriptionError,
+} from '../../shared/gemini-errors';
 
 // ============================================================================
 // Constants
@@ -54,83 +59,12 @@ interface GeminiServiceConfig {
   model?: string;
 }
 
-interface TranscriptionError extends Error {
-  code?: string;
-  isRetryable: boolean;
-}
-
 // ============================================================================
 // Utility Functions
 // ============================================================================
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function getMimeType(filePath: string): string {
-  const ext = path.extname(filePath).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.mp3': 'audio/mp3',
-    '.webm': 'audio/webm',
-    '.ogg': 'audio/ogg',
-    '.wav': 'audio/wav',
-    '.m4a': 'audio/m4a',
-  };
-  return mimeTypes[ext] || 'audio/wav';
-}
-
-function createTranscriptionError(message: string, code?: string, isRetryable = false): TranscriptionError {
-  const error = new Error(message) as TranscriptionError;
-  error.code = code;
-  error.isRetryable = isRetryable;
-  return error;
-}
-
-function parseGeminiError(error: unknown): TranscriptionError {
-  const message = error instanceof Error ? error.message : 'Unknown error';
-
-  // Check for network errors
-  if (message.includes('ENOTFOUND') || message.includes('ETIMEDOUT') || message.includes('network')) {
-    return createTranscriptionError(
-      'Network error. Please check your internet connection.',
-      'NETWORK_ERROR',
-      true
-    );
-  }
-
-  // Check for rate limit errors
-  if (message.includes('quota') || message.includes('RATE_LIMIT') || message.includes('429')) {
-    return createTranscriptionError(
-      'API rate limit exceeded. Please try again in a moment.',
-      'RATE_LIMIT',
-      true
-    );
-  }
-
-  // Check for API key errors
-  if (message.includes('API key') || message.includes('API_KEY_INVALID') || message.includes('401')) {
-    return createTranscriptionError(
-      'Invalid API key. Please check your Gemini API key in Settings.',
-      'INVALID_API_KEY',
-      false
-    );
-  }
-
-  // Check for content safety errors
-  if (message.includes('safety') || message.includes('SAFETY')) {
-    return createTranscriptionError(
-      'Content was blocked by safety filters.',
-      'SAFETY_BLOCK',
-      false
-    );
-  }
-
-  // Generic error
-  return createTranscriptionError(
-    `Transcription failed: ${message}`,
-    'UNKNOWN_ERROR',
-    false
-  );
 }
 
 // ============================================================================
@@ -208,8 +142,10 @@ export class GeminiService {
       }
     }
 
-    // All retries exhausted
-    throw lastError || createTranscriptionError('Transcription failed after all retries', 'MAX_RETRIES', false);
+    // All retries exhausted — log to persistent file so production failures are visible
+    const finalError = lastError || createTranscriptionError('Transcription failed after all retries', 'MAX_RETRIES', false);
+    logCriticalError('gemini', finalError);
+    throw finalError;
   }
 
   /**

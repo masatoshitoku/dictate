@@ -1,50 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import {
+  getMimeType,
+  createTranscriptionError,
+  parseGeminiError,
+} from '../shared/gemini-errors';
 
-// These are pure functions extracted from gemini.ts for testability.
-// We re-implement them here to test the logic without Electron dependencies.
-// The actual gemini.ts functions have identical logic.
-
-function getMimeType(filePath: string): string {
-  const ext = filePath.substring(filePath.lastIndexOf('.')).toLowerCase();
-  const mimeTypes: Record<string, string> = {
-    '.mp3': 'audio/mp3',
-    '.webm': 'audio/webm',
-    '.ogg': 'audio/ogg',
-    '.wav': 'audio/wav',
-    '.m4a': 'audio/m4a',
-  };
-  return mimeTypes[ext] || 'audio/wav';
-}
-
-interface TranscriptionError extends Error {
-  code?: string;
-  isRetryable: boolean;
-}
-
-function createTranscriptionError(message: string, code?: string, isRetryable = false): TranscriptionError {
-  const error = new Error(message) as TranscriptionError;
-  error.code = code;
-  error.isRetryable = isRetryable;
-  return error;
-}
-
-function parseGeminiError(error: unknown): TranscriptionError {
-  const message = error instanceof Error ? error.message : 'Unknown error';
-
-  if (message.includes('ENOTFOUND') || message.includes('ETIMEDOUT') || message.includes('network')) {
-    return createTranscriptionError('Network error. Please check your internet connection.', 'NETWORK_ERROR', true);
-  }
-  if (message.includes('quota') || message.includes('RATE_LIMIT') || message.includes('429')) {
-    return createTranscriptionError('API rate limit exceeded. Please try again in a moment.', 'RATE_LIMIT', true);
-  }
-  if (message.includes('API key') || message.includes('API_KEY_INVALID') || message.includes('401')) {
-    return createTranscriptionError('Invalid API key. Please check your Gemini API key in Settings.', 'INVALID_API_KEY', false);
-  }
-  if (message.includes('safety') || message.includes('SAFETY')) {
-    return createTranscriptionError('Content was blocked by safety filters.', 'SAFETY_BLOCK', false);
-  }
-  return createTranscriptionError(`Transcription failed: ${message}`, 'UNKNOWN_ERROR', false);
-}
+// Tests verify the REAL production functions imported from shared/gemini-errors.ts.
 
 describe('getMimeType', () => {
   it('returns audio/mp3 for .mp3', () => {

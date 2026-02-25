@@ -135,15 +135,3 @@ export function setupShortcuts(
   shortcutManager.updateShortcuts(shortcuts);
 }
 
-// Keep for backward compatibility
-export function setupDefaultShortcuts(
-  onToggleRecording: () => void,
-  onCancelRecording: () => void,
-  onOpenSettings?: () => void
-): void {
-  setupShortcuts({
-    onToggleRecording,
-    onCancelRecording,
-    onOpenSettings,
-  });
-}
