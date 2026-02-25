@@ -3,9 +3,14 @@
  * Extracted as a pure module for testability.
  */
 
-const JP_TO_JP_SPACE = /([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g;
-const JP_TO_ASCII_SPACE = /([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])\s+([a-zA-Z0-9])/g;
-const ASCII_TO_JP_SPACE = /([a-zA-Z0-9])\s+([\u3000-\u303F\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF00-\uFFEF])/g;
+// Unicode range for Japanese characters (CJK + fullwidth + kana + punctuation)
+const JP = '[\\u3000-\\u303F\\u3040-\\u309F\\u30A0-\\u30FF\\u4E00-\\u9FFF\\uFF00-\\uFFEF]';
+// Match only spaces and tabs — NOT newlines (\n, \r) to preserve line breaks in transcriptions
+const SP = '[ \\t]+';
+
+const JP_TO_JP_SPACE = new RegExp(`(${JP})${SP}(${JP})`, 'g');
+const JP_TO_ASCII_SPACE = new RegExp(`(${JP})${SP}([a-zA-Z0-9])`, 'g');
+const ASCII_TO_JP_SPACE = new RegExp(`([a-zA-Z0-9])${SP}(${JP})`, 'g');
 const FULLWIDTH_SPACE = /\u3000/g;
 
 /**
