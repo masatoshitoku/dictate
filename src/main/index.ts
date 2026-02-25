@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences, session, shell } from 'electron';
 import * as path from 'path';
 import { writeFileSync } from 'fs';
 
@@ -889,15 +889,26 @@ app.whenReady().then(() => {
         callback(false);
         return;
       }
-      // For 'granted' or 'not-determined' (macOS 26 TCC API bug), allow Chromium
-      // to proceed. The OS kernel enforces TCC at a lower level.
-      // If truly not-determined, also fire the permission dialog (fire-and-forget).
       if (status !== 'granted') {
+        // AWAIT askForMediaAccess so the TCC entry is created before proceeding.
+        // On macOS 26 Tahoe beta this may return false immediately,
+        // in which case open System Settings so the user can grant manually.
         systemPreferences.askForMediaAccess('microphone').then(result => {
           debugLog(`askForMediaAccess resolved: ${result}`);
+          const newStatus = systemPreferences.getMediaAccessStatus('microphone');
+          debugLog(`TCC status after askForMediaAccess: ${newStatus}`);
+          if (!result && newStatus !== 'granted') {
+            // macOS 26 bug: dialog didn't appear - open System Settings
+            debugLog('Opening System Settings (Microphone) for manual permission grant');
+            shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+          }
+          callback(true);
+        }).catch(() => {
+          callback(true);
         });
+      } else {
+        callback(true);
       }
-      callback(true);
     } else {
       callback(true);
     }
