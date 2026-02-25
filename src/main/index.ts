@@ -29,6 +29,7 @@ import {
 // ============================================================================
 
 const WINDOW_WIDTH = 176;
+// WINDOW_HEIGHT must match the CSS h-[44px] container + 4px vertical padding from bg-transparent wrapper
 const WINDOW_HEIGHT = 48;
 const WINDOW_BOTTOM_MARGIN = 40;
 const SETTINGS_WINDOW_WIDTH = 800;

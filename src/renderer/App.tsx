@@ -1,7 +1,22 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useStore } from './store';
 
+// ============================================================================
+// Waveform visualization constants
+// ============================================================================
+
+const BAR_COUNT = 7;
+/** Bell curve weights for center-emphasized waveform bars */
+const BELL_CURVE = [0.35, 0.62, 0.85, 1.0, 0.85, 0.62, 0.35] as const;
+const WAVEFORM_MAX_HEIGHT_PX = 28;
+const WAVEFORM_MIN_HEIGHT_SCALE = 10;
+const DEFAULT_AUDIO_LEVEL = 0.2;
+const AUDIO_LEVEL_FLOOR = 0.15;
+
+// ============================================================================
 // Singleton stream manager - survives component remounts
+// ============================================================================
+
 let globalStream: MediaStream | null = null;
 let streamInitPromise: Promise<MediaStream | null> | null = null;
 let permissionRequested = false;
@@ -14,7 +29,8 @@ export default function App() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const animationRef = useRef<number | null>(null);
-  const [audioLevels, setAudioLevels] = useState<number[]>(Array(7).fill(0.2));
+  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const [audioLevels, setAudioLevels] = useState<number[]>(Array(BAR_COUNT).fill(DEFAULT_AUDIO_LEVEL));
   const maxAudioLevelRef = useRef<number>(0);
 
   const isRecording = status === 'recording';
@@ -32,6 +48,7 @@ export default function App() {
       audioContextRef.current = null;
     }
     analyserRef.current = null;
+    dataArrayRef.current = null;
     // Stop MediaRecorder if still recording before nulling
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       try {
@@ -44,7 +61,7 @@ export default function App() {
     audioChunksRef.current = [];
     currentSessionChunksRef.current = [];
     maxAudioLevelRef.current = 0;
-    setAudioLevels(Array(7).fill(0.2));
+    setAudioLevels(Array(BAR_COUNT).fill(DEFAULT_AUDIO_LEVEL));
   }, []);
 
   // Initialize stream ONCE globally - only if main process has granted permission
@@ -56,15 +73,12 @@ export default function App() {
       if (allTracksLive) {
         return globalStream;
       }
-      // Tracks ended but stream still marked active - reset
-      console.log('[Dictate] Audio tracks ended, resetting stream...');
       globalStream = null;
       permissionRequested = false;
     }
 
     // Stream became inactive - reset and retry
     if (globalStream && !globalStream.active) {
-      console.log('[Dictate] Stream became inactive, resetting...');
       globalStream = null;
       permissionRequested = false;
     }
@@ -77,11 +91,7 @@ export default function App() {
     // Check if main process has granted permission (only true when macOS TCC status is 'granted')
     const hasPermission = await window.electronAPI.checkMicrophonePermission();
     if (!hasPermission) {
-      console.log('[Dictate] Microphone permission not yet granted');
-      // Show appropriate message: if this is first time, dialog has been shown by main process.
-      // User needs to click Allow in the macOS permission dialog.
       setError('マイクの権限ダイアログが表示されています。「許可」をクリックしてから再度お試しください。');
-      // Do NOT set permissionRequested = true here - allow retry after user grants permission
       return null;
     }
 
@@ -89,7 +99,6 @@ export default function App() {
     permissionRequested = true;
     streamInitPromise = (async () => {
       try {
-        console.log('[Dictate] Getting microphone stream (permission already granted)');
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             channelCount: 1,
@@ -103,13 +112,11 @@ export default function App() {
         // Monitor track ended events
         stream.getAudioTracks().forEach(track => {
           track.onended = () => {
-            console.log('[Dictate] Audio track ended unexpectedly');
             globalStream = null;
             permissionRequested = false;
           };
         });
 
-        console.log('[Dictate] Microphone stream acquired');
         return stream;
       } catch (error) {
         console.error('[Dictate] Failed to get microphone stream:', error);
@@ -138,24 +145,11 @@ export default function App() {
     });
 
     const unsubscribeStartCapture = window.electronAPI.onStartAudioCapture(async () => {
-      console.log('[Renderer] ====== onStartAudioCapture received ======');
-      console.log('[Renderer] Current globalStream:', globalStream);
-      console.log('[Renderer] globalStream active:', globalStream?.active);
-      console.log('[Renderer] Current mediaRecorderRef:', mediaRecorderRef.current?.state);
-
       try {
-        // Clean up any previous recording first
-        console.log('[Renderer] Calling cleanupRecording...');
         cleanupRecording();
 
-        // Get or reuse global media stream (never requests permission more than once)
-        console.log('[Renderer] Getting global stream...');
         const stream = await initGlobalStream();
-        console.log('[Renderer] Got stream:', !!stream, 'active:', stream?.active);
-        if (!stream) {
-          console.log('[Renderer] No stream returned, aborting');
-          return; // Error already set by initGlobalStream
-        }
+        if (!stream) return;
 
         // Set up audio analyser for visualization
         const audioContext = new AudioContext();
@@ -164,60 +158,30 @@ export default function App() {
         }
         audioContextRef.current = audioContext;
 
-        // Monitor AudioContext state changes
-        audioContext.onstatechange = () => {
-          console.log('[Dictate] AudioContext state changed:', audioContext.state);
-          if (audioContext.state === 'suspended' || audioContext.state === 'closed') {
-            console.error('[Dictate] AudioContext suspended/closed during recording');
-          }
-        };
-
         const source = audioContext.createMediaStreamSource(stream);
         const analyser = audioContext.createAnalyser();
         analyser.fftSize = 32;
         source.connect(analyser);
         analyserRef.current = analyser;
 
-        // Start animation loop with state monitoring
-        let monitorCounter = 0;
+        // Allocate Uint8Array once for reuse across animation frames
+        dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
+
+        // Start animation loop
         const updateLevels = () => {
-          // Periodic state check (every ~60 frames = ~1 second)
-          monitorCounter++;
-          if (monitorCounter % 60 === 0) {
-            // Check stream state
-            if (globalStream && !globalStream.active) {
-              console.error('[Dictate] DETECTED: Stream became inactive during recording!');
-            }
-            const tracks = globalStream?.getAudioTracks() || [];
-            tracks.forEach((track, i) => {
-              if (track.readyState === 'ended') {
-                console.error(`[Dictate] DETECTED: Track ${i} ended during recording!`);
-              }
-            });
-            // Check MediaRecorder state
-            if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'inactive') {
-              console.error('[Dictate] DETECTED: MediaRecorder became inactive during recording!');
-            }
-            // Check AudioContext state
-            if (audioContextRef.current && audioContextRef.current.state !== 'running') {
-              console.error('[Dictate] DETECTED: AudioContext not running:', audioContextRef.current.state);
-            }
-          }
+          const currentAnalyser = analyserRef.current;
+          const dataArray = dataArrayRef.current;
+          if (currentAnalyser && dataArray) {
+            currentAnalyser.getByteFrequencyData(dataArray);
 
-          if (analyserRef.current) {
-            const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-            analyserRef.current.getByteFrequencyData(dataArray);
-
-            // Calculate average level
             const avgLevel = dataArray.reduce((a, b) => a + b, 0) / dataArray.length / 255;
-            // Track max level during recording
             if (avgLevel > maxAudioLevelRef.current) {
               maxAudioLevelRef.current = avgLevel;
             }
 
-            const levels = Array(7).fill(0).map((_, i) => {
-              const idx = Math.floor((i / 7) * dataArray.length);
-              return Math.max(0.15, dataArray[idx] / 255);
+            const levels = Array(BAR_COUNT).fill(0).map((_, i) => {
+              const idx = Math.floor((i / BAR_COUNT) * dataArray.length);
+              return Math.max(AUDIO_LEVEL_FLOOR, dataArray[idx] / 255);
             });
             setAudioLevels(levels);
           }
@@ -225,16 +189,11 @@ export default function App() {
         };
         updateLevels();
 
-        console.log('[Renderer] Creating MediaRecorder...');
-
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: 'audio/webm;codecs=opus',
         });
-        console.log('[Renderer] MediaRecorder created, state:', mediaRecorder.state);
 
-        mediaRecorder.onerror = (event) => {
-          console.error('[Dictate] MediaRecorder error:', event);
-          // Reset stream on error
+        mediaRecorder.onerror = () => {
           globalStream = null;
           permissionRequested = false;
           cleanupRecording();
@@ -254,10 +213,7 @@ export default function App() {
         };
 
         mediaRecorderRef.current = mediaRecorder;
-        console.log('[Renderer] Starting MediaRecorder (no timeslice)...');
         mediaRecorder.start();
-        console.log('[Renderer] MediaRecorder started, state:', mediaRecorder.state);
-        console.log('[Renderer] ====== Recording started successfully ======');
       } catch (error) {
         console.error('Failed to start audio capture:', error);
         setError('マイクへのアクセスに失敗しました');
@@ -265,48 +221,28 @@ export default function App() {
     });
 
     const unsubscribeStopCapture = window.electronAPI.onStopAudioCapture(async () => {
-      console.log('[Renderer] ====== onStopAudioCapture received ======');
-      console.log('[Renderer] max audio level:', maxAudioLevelRef.current);
-      console.log('[Renderer] globalStream:', globalStream);
-      console.log('[Renderer] globalStream active:', globalStream?.active);
-      console.log('[Renderer] mediaRecorderRef:', mediaRecorderRef.current);
-      console.log('[Renderer] mediaRecorderRef state:', mediaRecorderRef.current?.state);
-
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
 
-      console.log('[Renderer] Max audio level during recording:', maxAudioLevelRef.current);
-
       // If no active recorder, send empty data to prevent timeout
       if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') {
-        console.log('[Renderer] No active recorder, sending empty audio data');
-        console.log('[Renderer] mediaRecorderRef.current:', mediaRecorderRef.current);
-        console.log('[Renderer] state:', mediaRecorderRef.current?.state);
         window.electronAPI.sendAudioData(new ArrayBuffer(0));
         return;
       }
 
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         const recorder = mediaRecorderRef.current;
-        console.log('[Renderer] Recorder state before stop:', recorder.state);
 
         recorder.onstop = async () => {
-          console.log('[Renderer] ====== recorder.onstop fired ======');
           try {
-            console.log('[Renderer] MediaRecorder stopped, chunks:', currentSessionChunksRef.current.length);
             const audioBlob = new Blob(currentSessionChunksRef.current, { type: 'audio/webm' });
-            console.log('[Renderer] Audio blob size:', audioBlob.size);
             const arrayBuffer = await audioBlob.arrayBuffer();
-            console.log('[Renderer] Sending audio data to main process, size:', arrayBuffer.byteLength);
             window.electronAPI.sendAudioData(arrayBuffer);
-            console.log('[Renderer] Audio data sent!');
-          } catch (error) {
-            console.error('[Renderer] Error in onstop handler:', error);
+          } catch {
             window.electronAPI.sendAudioData(new ArrayBuffer(0));
           } finally {
-            // Cleanup - but keep the stream alive for reuse
             if (audioContextRef.current) {
               try {
                 audioContextRef.current.close();
@@ -317,26 +253,22 @@ export default function App() {
             }
             mediaRecorderRef.current = null;
             analyserRef.current = null;
+            dataArrayRef.current = null;
             currentSessionChunksRef.current = [];
             maxAudioLevelRef.current = 0;
-            setAudioLevels(Array(7).fill(0.2));
-            console.log('[Renderer] Cleanup complete');
+            setAudioLevels(Array(BAR_COUNT).fill(DEFAULT_AUDIO_LEVEL));
           }
         };
 
         try {
-          console.log('[Renderer] Calling recorder.stop()...');
           recorder.stop();
-          console.log('[Renderer] recorder.stop() called, state now:', recorder.state);
-        } catch (error) {
-          console.error('[Renderer] Error stopping recorder:', error);
+        } catch {
           window.electronAPI.sendAudioData(new ArrayBuffer(0));
         }
       }
     });
 
     const unsubscribeCancelRecording = window.electronAPI.onCancelRecording(() => {
-      console.log('Cancel recording');
       cleanupRecording();
       setStatus('idle');
     });
@@ -350,7 +282,6 @@ export default function App() {
       unsubscribeCancelRecording();
       cleanupRecording();
       // NOTE: Do NOT stop globalStream here - it survives component remounts
-      // The stream is only stopped when the app process exits
     };
   }, [setStatus, setLastTranscription, setError, cleanupRecording, initGlobalStream]);
 
@@ -370,11 +301,11 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen flex items-center justify-center bg-transparent">
-      <div className="flex items-center gap-[8px] rounded-[12px] px-[8px] transition-all duration-300 h-[44px] bg-[rgba(10,10,12,0.91)]">
+      <div className="flex items-center gap-[8px] rounded-[12px] px-[8px] transition-colors duration-300 h-[44px] bg-noir-panel/[0.91]">
         {/* Cancel button */}
         <button
           onClick={handleCancel}
-          className="w-8 h-8 rounded-[8px] bg-transparent hover:bg-white/[0.05] flex items-center justify-center transition-all duration-150 border border-white/[0.07] hover:border-white/[0.15] active:scale-95 flex-shrink-0"
+          className="w-8 h-8 rounded-[8px] bg-transparent hover:bg-white/[0.05] flex items-center justify-center transition-colors duration-150 border border-white/[0.07] hover:border-white/[0.15] active:scale-95 flex-shrink-0"
           title="Cancel"
         >
           <svg className="w-[12px] h-[12px] text-white/[0.28]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -397,18 +328,18 @@ export default function App() {
             </div>
           ) : (
             audioLevels.map((level, i) => {
-              const bell = [0.35, 0.62, 0.85, 1.0, 0.85, 0.62, 0.35][i];
-              const minH = bell * 10;
+              const bell = BELL_CURVE[i];
+              const minH = bell * WAVEFORM_MIN_HEIGHT_SCALE;
               return (
                 <div
                   key={i}
-                  className={`w-[2px] rounded-[1px] transition-all duration-75 ${
+                  className={`w-[2px] rounded-[1px] transition-[height] duration-75 ${
                     isRecording
-                      ? 'bg-[#C8AA6E]'
+                      ? 'bg-gold'
                       : 'bg-white/[0.18]'
                   }`}
                   style={{
-                    height: `${Math.max(minH, level * 28 * bell)}px`,
+                    height: `${Math.max(minH, level * WAVEFORM_MAX_HEIGHT_PX * bell)}px`,
                   }}
                 />
               );
@@ -420,14 +351,14 @@ export default function App() {
         <button
           onClick={handleConfirm}
           disabled={!isRecording}
-          className={`w-8 h-8 rounded-[8px] flex items-center justify-center transition-all duration-150 border flex-shrink-0 ${
+          className={`w-8 h-8 rounded-[8px] flex items-center justify-center transition-colors duration-150 border flex-shrink-0 ${
             isRecording
-              ? 'bg-[rgba(200,170,100,0.08)] border-[rgba(200,170,100,0.55)] hover:bg-[rgba(200,170,100,0.12)] active:scale-95'
+              ? 'bg-gold/[0.08] border-gold/[0.55] hover:bg-gold/[0.12] active:scale-95'
               : 'bg-transparent border-white/[0.05] cursor-not-allowed'
           }`}
           title="Confirm"
         >
-          <svg className={`w-[12px] h-[12px] ${isRecording ? 'text-[#C8AA6E]' : 'text-white/[0.12]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <svg className={`w-[12px] h-[12px] ${isRecording ? 'text-gold' : 'text-white/[0.12]'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
           </svg>
         </button>
