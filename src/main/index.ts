@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, systemPreferences, session } from 'electron';
 import * as path from 'path';
+import { writeFileSync } from 'fs';
 
 // Prevent EPIPE errors when stdout/stderr is closed
 process.stdout?.on?.('error', () => {});
@@ -160,10 +161,8 @@ function createWindow(): void {
 
   loadWindowURL(mainWindow);
 
-  // Open DevTools in development for debugging
-  if (!app.isPackaged) {
-    mainWindow.webContents.openDevTools({ mode: 'detach' });
-  }
+  // Open DevTools for debugging (always, temporarily)
+  mainWindow.webContents.openDevTools({ mode: 'detach' });
 
   mainWindow.on('close', (event) => {
     if (!appIsQuitting) {
@@ -349,11 +348,17 @@ async function stopRecording(): Promise<void> {
       debugLog('Stopping recording...');
       const audioBuffer = await audioRecorder.stopRecording();
       debugLog(`Audio buffer size: ${audioBuffer.length}`);
+      debugLog(`Audio header bytes: ${Array.from(audioBuffer.slice(0, 8)).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+      // Save audio for debugging
+      try {
+        writeFileSync('/tmp/dictate-debug-audio.webm', audioBuffer);
+        debugLog('Audio saved to /tmp/dictate-debug-audio.webm');
+      } catch (e) { /* ignore */ }
 
       // Skip if audio is too short (likely no real speech)
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
         debugLog('Audio too short, skipping transcription');
-  
+
         window.hide();
         return;
       }
