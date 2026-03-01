@@ -2,7 +2,11 @@
 <html lang="ja">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';" />
+    <!-- CSP is enforced via Electron's onHeadersReceived (see main/index.ts).
+         The meta tag was removed because it conflicts with Vite dev server's
+         inline scripts (React Refresh, HMR client) during development.
+         Multiple CSP sources are intersected by Chromium, so the strict meta
+         tag blocked 'unsafe-inline' even when the header allowed it. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dictate</title>
   </head>
