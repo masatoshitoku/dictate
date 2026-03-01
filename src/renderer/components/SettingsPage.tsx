@@ -1,81 +1,318 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import type { DictionaryEntry, ShortcutSettings, TranscriptionHistoryEntry } from '../../shared/types';
+import { DEFAULT_SHORTCUTS } from '../../shared/types';
 
-type MainTab = 'apikey' | 'dictionary' | 'shortcuts' | 'history';
+type MainTab = 'dictionary' | 'shortcuts' | 'history' | 'apikey';
+
+// ============================================================================
+// Sidebar Icons (SF Symbols-inspired)
+// ============================================================================
+
+function BookIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+    </svg>
+  );
+}
+
+function KeyboardIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 7.5l3 2.25-3 2.25m4.5 0h3m-9 8.25h13.5A2.25 2.25 0 0021 18V6a2.25 2.25 0 00-2.25-2.25H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+  );
+}
+
+function ClockIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+  );
+}
+
+function KeyIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
+    </svg>
+  );
+}
+
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+    </svg>
+  );
+}
+
+function PlusIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+    </svg>
+  );
+}
+
+function PencilIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+    </svg>
+  );
+}
+
+function TrashIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+    </svg>
+  );
+}
+
+function XIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+    </svg>
+  );
+}
+
+// ============================================================================
+// Tab configuration
+// ============================================================================
+
+const TAB_CONFIG: { key: MainTab; label: string; icon: typeof BookIcon }[] = [
+  { key: 'dictionary', label: 'Dictionary', icon: BookIcon },
+  { key: 'shortcuts', label: 'Shortcuts', icon: KeyboardIcon },
+  { key: 'history', label: 'History', icon: ClockIcon },
+  { key: 'apikey', label: 'API Key', icon: KeyIcon },
+];
+
+// ============================================================================
+// Main SettingsPage
+// ============================================================================
 
 export default function SettingsPage() {
   const [mainTab, setMainTab] = useState<MainTab>('dictionary');
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900/20 to-slate-900 text-white">
-      {/* Header - pl-20 to avoid macOS window buttons, draggable for window movement */}
+    <div className="min-h-screen bg-[#1e1e1e] text-[#e5e5e5] select-none">
+      {/* Title bar - draggable, leaves room for macOS traffic lights */}
       <div
-        className="border-b border-white/10 pl-20 pr-6 py-4 backdrop-blur-sm bg-white/5"
+        className="h-13 flex items-center pl-20 pr-5 border-b border-white/[0.06] bg-[#252525]"
         style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
       >
-        <h1 className="text-xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-          Settings
-        </h1>
+        <h1 className="text-[13px] font-medium text-white/80 tracking-tight">Settings</h1>
       </div>
 
-      <div className="flex h-[calc(100vh-65px)]">
+      <div className="flex h-[calc(100vh-52px)]">
         {/* Sidebar */}
-        <div className="w-56 border-r border-white/10 p-4 bg-white/5 backdrop-blur-sm">
-          <nav className="space-y-2">
-            <button
-              onClick={() => setMainTab('dictionary')}
-              className={`w-full text-left px-4 py-2.5 text-sm rounded-xl transition-all duration-200 ${
-                mainTab === 'dictionary'
-                  ? 'bg-gradient-to-r from-violet-500/30 to-cyan-500/30 border border-violet-400/30 text-white shadow-lg shadow-violet-500/10'
-                  : 'hover:bg-white/10 text-white/70 hover:text-white border border-transparent'
-              }`}
-            >
-              Dictionary
-            </button>
-            <button
-              onClick={() => setMainTab('shortcuts')}
-              className={`w-full text-left px-4 py-2.5 text-sm rounded-xl transition-all duration-200 ${
-                mainTab === 'shortcuts'
-                  ? 'bg-gradient-to-r from-violet-500/30 to-cyan-500/30 border border-violet-400/30 text-white shadow-lg shadow-violet-500/10'
-                  : 'hover:bg-white/10 text-white/70 hover:text-white border border-transparent'
-              }`}
-            >
-              Shortcuts
-            </button>
-            <button
-              onClick={() => setMainTab('history')}
-              className={`w-full text-left px-4 py-2.5 text-sm rounded-xl transition-all duration-200 ${
-                mainTab === 'history'
-                  ? 'bg-gradient-to-r from-violet-500/30 to-cyan-500/30 border border-violet-400/30 text-white shadow-lg shadow-violet-500/10'
-                  : 'hover:bg-white/10 text-white/70 hover:text-white border border-transparent'
-              }`}
-            >
-              History
-            </button>
-            <button
-              onClick={() => setMainTab('apikey')}
-              className={`w-full text-left px-4 py-2.5 text-sm rounded-xl transition-all duration-200 ${
-                mainTab === 'apikey'
-                  ? 'bg-gradient-to-r from-violet-500/30 to-cyan-500/30 border border-violet-400/30 text-white shadow-lg shadow-violet-500/10'
-                  : 'hover:bg-white/10 text-white/70 hover:text-white border border-transparent'
-              }`}
-            >
-              API Key
-            </button>
+        <div className="w-52 border-r border-white/[0.06] bg-[#222222] px-3 py-3">
+          <nav className="space-y-0.5">
+            {TAB_CONFIG.map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setMainTab(key)}
+                className={`w-full flex items-center gap-2.5 px-3 py-[7px] text-[13px] rounded-md transition-colors duration-100 ${
+                  mainTab === key
+                    ? 'bg-white/[0.12] text-white font-medium'
+                    : 'text-white/60 hover:bg-white/[0.06] hover:text-white/80'
+                }`}
+              >
+                <Icon className="w-[16px] h-[16px] flex-shrink-0" />
+                {label}
+              </button>
+            ))}
           </nav>
         </div>
 
-        {/* Main Content */}
-        <div className="flex-1 p-8 overflow-y-auto">
-          {mainTab === 'apikey' && <ApiKeySection />}
-          {mainTab === 'dictionary' && <DictionarySection />}
-          {mainTab === 'shortcuts' && <ShortcutsSection />}
-          {mainTab === 'history' && <HistorySection />}
+        {/* Main content area */}
+        <div className="flex-1 overflow-y-auto bg-[#1e1e1e]">
+          <div className="max-w-2xl mx-auto px-8 py-7">
+            {mainTab === 'apikey' && <ApiKeySection />}
+            {mainTab === 'dictionary' && <DictionarySection />}
+            {mainTab === 'shortcuts' && <ShortcutsSection />}
+            {mainTab === 'history' && <HistorySection />}
+          </div>
         </div>
       </div>
     </div>
   );
 }
+
+// ============================================================================
+// Shared UI Primitives
+// ============================================================================
+
+function SectionHeader({ title, action }: { title: string; action?: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between mb-5">
+      <h2 className="text-[20px] font-semibold text-white tracking-tight">{title}</h2>
+      {action}
+    </div>
+  );
+}
+
+function Card({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`bg-[#2a2a2a] border border-white/[0.06] rounded-lg ${className}`}>
+      {children}
+    </div>
+  );
+}
+
+function AlertBox({
+  variant,
+  children,
+  onDismiss,
+}: {
+  variant: 'error' | 'warning' | 'success' | 'info';
+  children: React.ReactNode;
+  onDismiss?: () => void;
+}) {
+  const styles = {
+    error: 'bg-red-500/[0.08] border-red-500/20 text-red-400',
+    warning: 'bg-amber-500/[0.08] border-amber-500/20 text-amber-400',
+    success: 'bg-emerald-500/[0.08] border-emerald-500/20 text-emerald-400',
+    info: 'bg-blue-500/[0.08] border-blue-500/20 text-blue-400',
+  };
+
+  return (
+    <div className={`flex items-start gap-3 p-3 rounded-lg border text-[13px] leading-relaxed mb-4 ${styles[variant]}`}>
+      <span className="flex-1">{children}</span>
+      {onDismiss && (
+        <button
+          onClick={onDismiss}
+          className="flex-shrink-0 opacity-60 hover:opacity-100 transition-opacity mt-0.5"
+        >
+          <XIcon className="w-3.5 h-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function TextInput({
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  className = '',
+  autoFocus,
+  rightElement,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: string;
+  className?: string;
+  autoFocus?: boolean;
+  rightElement?: React.ReactNode;
+}) {
+  return (
+    <div className="relative">
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        className={`w-full px-3 py-[7px] bg-[#1e1e1e] border border-white/[0.1] rounded-md text-[13px] text-white/90 placeholder-white/25 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all ${rightElement ? 'pr-16' : ''} ${className}`}
+      />
+      {rightElement && (
+        <div className="absolute right-2 top-1/2 -translate-y-1/2">{rightElement}</div>
+      )}
+    </div>
+  );
+}
+
+function SearchInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <div className="relative mb-4">
+      <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder ?? 'Search...'}
+        className="w-full pl-9 pr-3 py-[7px] bg-[#1e1e1e] border border-white/[0.1] rounded-md text-[13px] text-white/90 placeholder-white/25 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all"
+      />
+    </div>
+  );
+}
+
+function PrimaryButton({
+  onClick,
+  disabled,
+  children,
+  variant = 'primary',
+  className = '',
+}: {
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+  variant?: 'primary' | 'secondary' | 'danger';
+  className?: string;
+}) {
+  const styles = {
+    primary: 'bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white shadow-sm shadow-blue-600/20',
+    secondary: 'bg-white/[0.08] hover:bg-white/[0.12] active:bg-white/[0.06] text-white/80 border border-white/[0.08]',
+    danger: 'bg-red-600/80 hover:bg-red-500/80 active:bg-red-700/80 text-white shadow-sm shadow-red-600/10',
+  };
+
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`px-4 py-[6px] text-[13px] font-medium rounded-md transition-all disabled:opacity-35 disabled:cursor-not-allowed ${styles[variant]} ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Label({ children }: { children: React.ReactNode }) {
+  return <label className="block text-[12px] font-medium text-white/50 uppercase tracking-wider mb-1.5">{children}</label>;
+}
+
+function HelpCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <Card className="mt-8 p-4">
+      <h3 className="text-[13px] font-medium text-white/70 mb-2">{title}</h3>
+      <div className="text-[12px] text-white/40 leading-relaxed">{children}</div>
+    </Card>
+  );
+}
+
+// ============================================================================
+// Modal Overlay
+// ============================================================================
+
+function ModalOverlay({
+  children,
+  onClose,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-[#2a2a2a] border border-white/[0.1] rounded-xl shadow-2xl shadow-black/40 w-[380px]">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// API Key Section
+// ============================================================================
 
 function ApiKeySection() {
   const [apiKey, setApiKey] = useState('');
@@ -88,6 +325,7 @@ function ApiKeySection() {
     error?: string;
   } | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveResult, setSaveResult] = useState<'success' | 'error' | null>(null);
   const [isEncrypted, setIsEncrypted] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -144,146 +382,115 @@ function ApiKeySection() {
 
       if (success) {
         setSaveMessage('API key saved successfully. Please restart the app to apply changes.');
+        setSaveResult('success');
         setApiKey('');
         await loadCurrentKey();
       } else {
         setSaveMessage('Failed to save API key. Please try again.');
+        setSaveResult('error');
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
       setSaveMessage(`Failed to save API key: ${message}`);
+      setSaveResult('error');
     } finally {
       setIsSaving(false);
     }
   };
 
   return (
-    <div className="max-w-2xl">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-          Gemini API Key
-        </h2>
-      </div>
+    <div>
+      <SectionHeader title="Gemini API Key" />
 
-      {loadError && (
-        <div className="mb-4 p-4 bg-red-500/10 backdrop-blur-sm border border-red-400/30 rounded-xl">
-          <p className="text-sm text-red-300">{loadError}</p>
-        </div>
-      )}
+      {loadError && <AlertBox variant="error">{loadError}</AlertBox>}
 
       {!isEncrypted && (
-        <div className="mb-4 p-4 bg-amber-500/10 backdrop-blur-sm border border-amber-400/30 rounded-xl">
-          <p className="text-sm text-amber-300">
-            Warning: Secure encryption is not available on this system. Your API key will be stored in plain text.
-          </p>
-        </div>
+        <AlertBox variant="warning">
+          Secure encryption is not available on this system. Your API key will be stored in plain text.
+        </AlertBox>
       )}
 
       {maskedKey && (
-        <div className="mb-6 p-5 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-          <p className="text-sm text-white/50 mb-2">Current API Key:</p>
-          <p className="font-mono text-sm text-white/80">{maskedKey}</p>
-        </div>
+        <Card className="p-4 mb-5">
+          <div className="text-[12px] font-medium text-white/40 uppercase tracking-wider mb-1">Current API Key</div>
+          <div className="font-mono text-[13px] text-white/70">{maskedKey}</div>
+        </Card>
       )}
 
-      <div className="space-y-5">
+      <Card className="p-4 space-y-4">
         <div>
-          <label className="block text-sm font-medium text-white/60 mb-2">
-            {maskedKey ? 'Enter new API Key' : 'Enter your Gemini API Key'}
-          </label>
-          <div className="relative">
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => {
-                setApiKey(e.target.value);
-                setValidationResult(null);
-                setSaveMessage(null);
-              }}
-              placeholder="AIza..."
-              className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-sm focus:outline-none focus:border-violet-400/50 focus:bg-white/10 transition-all pr-20 placeholder-white/30"
-            />
-            <button
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-white/40 hover:text-white/70 text-sm transition-colors"
-            >
-              {showKey ? 'Hide' : 'Show'}
-            </button>
-          </div>
+          <Label>{maskedKey ? 'Enter new API Key' : 'Enter your Gemini API Key'}</Label>
+          <TextInput
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={(v) => {
+              setApiKey(v);
+              setValidationResult(null);
+              setSaveMessage(null);
+              setSaveResult(null);
+            }}
+            placeholder="AIza..."
+            rightElement={
+              <button
+                onClick={() => setShowKey(!showKey)}
+                className="text-[12px] text-white/40 hover:text-white/70 transition-colors px-1"
+              >
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            }
+          />
         </div>
 
         {validationResult && (
-          <div
-            className={`p-4 rounded-xl backdrop-blur-sm ${
-              validationResult.valid
-                ? 'bg-emerald-500/10 border border-emerald-400/30'
-                : 'bg-red-500/10 border border-red-400/30'
-            }`}
-          >
-            <p className={`text-sm ${validationResult.valid ? 'text-emerald-300' : 'text-red-300'}`}>
-              {validationResult.valid ? 'API key is valid!' : validationResult.error}
-            </p>
-          </div>
+          <AlertBox variant={validationResult.valid ? 'success' : 'error'}>
+            {validationResult.valid ? 'API key is valid!' : validationResult.error}
+          </AlertBox>
         )}
 
         {saveMessage && (
-          <div
-            className={`p-4 rounded-xl backdrop-blur-sm ${
-              saveMessage.includes('success')
-                ? 'bg-emerald-500/10 border border-emerald-400/30'
-                : 'bg-red-500/10 border border-red-400/30'
-            }`}
-          >
-            <p className={`text-sm ${saveMessage.includes('success') ? 'text-emerald-300' : 'text-red-300'}`}>
-              {saveMessage}
-            </p>
-          </div>
+          <AlertBox variant={saveResult === 'success' ? 'success' : 'error'}>
+            {saveMessage}
+          </AlertBox>
         )}
 
-        <div className="flex gap-3">
-          <button
-            onClick={handleValidate}
-            disabled={!apiKey.trim() || isValidating}
-            className="px-5 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/10 hover:border-white/20 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-all"
-          >
+        <div className="flex gap-2 pt-1">
+          <PrimaryButton onClick={handleValidate} disabled={!apiKey.trim() || isValidating} variant="secondary">
             {isValidating ? 'Validating...' : 'Validate'}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={!apiKey.trim() || isSaving}
-            className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-cyan-500 hover:from-violet-400 hover:to-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-violet-500/20"
-          >
+          </PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={!apiKey.trim() || isSaving}>
             {isSaving ? 'Saving...' : 'Save'}
-          </button>
+          </PrimaryButton>
         </div>
+      </Card>
 
-        <div className="mt-10 p-5 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-          <h3 className="text-sm font-medium mb-3 text-white/80">How to get your API Key:</h3>
-          <ol className="text-sm text-white/50 space-y-2 list-decimal list-inside">
-            <li>
-              Go to{' '}
-              <a
-                href="https://aistudio.google.com/apikey"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-violet-400 hover:text-violet-300 transition-colors"
-              >
-                Google AI Studio
-              </a>
-            </li>
-            <li>Sign in with your Google account</li>
-            <li>Click &quot;Create API key&quot;</li>
-            <li>Copy the generated key and paste it above</li>
-          </ol>
-        </div>
-      </div>
+      <HelpCard title="How to get your API Key">
+        <ol className="space-y-1.5 list-decimal list-inside">
+          <li>
+            Go to{' '}
+            <a
+              href="https://aistudio.google.com/apikey"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2"
+            >
+              Google AI Studio
+            </a>
+          </li>
+          <li>Sign in with your Google account</li>
+          <li>Click &quot;Create API key&quot;</li>
+          <li>Copy the generated key and paste it above</li>
+        </ol>
+      </HelpCard>
     </div>
   );
 }
 
+// ============================================================================
+// Dictionary Section
+// ============================================================================
+
 function DictionarySection() {
   const [entries, setEntries] = useState<DictionaryEntry[]>([]);
-  const [filteredEntries, setFilteredEntries] = useState<DictionaryEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [newReading, setNewReading] = useState('');
@@ -295,10 +502,6 @@ function DictionarySection() {
   useEffect(() => {
     loadEntries();
   }, []);
-
-  useEffect(() => {
-    filterEntries();
-  }, [entries, searchQuery]);
 
   const loadEntries = async () => {
     try {
@@ -314,20 +517,15 @@ function DictionarySection() {
     }
   };
 
-  const filterEntries = () => {
-    let filtered = [...entries];
-
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (e) =>
-          e.reading.toLowerCase().includes(query) ||
-          e.word.toLowerCase().includes(query)
-      );
-    }
-
-    setFilteredEntries(filtered);
-  };
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return entries;
+    const query = searchQuery.toLowerCase();
+    return entries.filter(
+      (e) =>
+        e.reading.toLowerCase().includes(query) ||
+        e.word.toLowerCase().includes(query)
+    );
+  }, [entries, searchQuery]);
 
   const handleAddEntry = async () => {
     if (!newReading.trim() || !newWord.trim()) return;
@@ -365,6 +563,7 @@ function DictionarySection() {
   };
 
   const handleDeleteEntry = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this dictionary entry?')) return;
     try {
       setError(null);
       await window.electronAPI.deleteDictionaryEntry(id);
@@ -389,125 +588,93 @@ function DictionarySection() {
   };
 
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-          Dictionary
-        </h2>
-        <button
-          onClick={() => setIsAddDialogOpen(true)}
-          className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-cyan-500 hover:from-violet-400 hover:to-cyan-400 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-violet-500/20 flex items-center gap-2"
-        >
-          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          New Word
-        </button>
-      </div>
+    <div>
+      <SectionHeader
+        title="Dictionary"
+        action={
+          <PrimaryButton onClick={() => setIsAddDialogOpen(true)}>
+            <span className="flex items-center gap-1.5">
+              <PlusIcon className="w-3.5 h-3.5" />
+              New Word
+            </span>
+          </PrimaryButton>
+        }
+      />
 
-      {/* Error Display */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-500/10 backdrop-blur-sm border border-red-400/30 rounded-xl flex items-center justify-between">
-          <p className="text-sm text-red-300">{error}</p>
-          <button onClick={() => setError(null)} className="text-red-300 hover:text-red-200 ml-2 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
+      {error && <AlertBox variant="error" onDismiss={() => setError(null)}>{error}</AlertBox>}
 
-      {/* Loading State */}
       {isLoading && (
-        <div className="mb-4 text-center text-white/50 text-sm">Loading dictionary...</div>
+        <div className="py-6 text-center text-[13px] text-white/40">Loading dictionary...</div>
       )}
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <svg
-          className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white/40"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-11 pr-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-sm focus:outline-none focus:border-violet-400/50 focus:bg-white/10 transition-all placeholder-white/30"
-        />
-      </div>
+      <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="Search words..." />
 
-      {/* Table */}
       {filteredEntries.length > 0 ? (
-        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
+        <Card className="overflow-hidden">
           <table className="w-full">
-            <thead className="bg-white/5 border-b border-white/10">
-              <tr>
-                <th className="px-5 py-4 text-left text-xs font-medium text-white/50 uppercase tracking-wider">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                <th className="px-4 py-2.5 text-left text-[11px] font-medium text-white/40 uppercase tracking-wider">
                   Reading
                 </th>
-                <th className="px-5 py-4 text-left text-xs font-medium text-white/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-[11px] font-medium text-white/40 uppercase tracking-wider">
                   Word
                 </th>
-                <th className="px-5 py-4 text-right text-xs font-medium text-white/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-right text-[11px] font-medium text-white/40 uppercase tracking-wider w-20">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredEntries.map((entry) => (
-                <tr key={entry.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-5 py-4 text-sm text-white/70">{entry.reading}</td>
-                  <td className="px-5 py-4 text-sm font-medium text-white">{entry.word}</td>
-                  <td className="px-5 py-4 text-sm text-right">
-                    <button
-                      onClick={() => openEditDialog(entry)}
-                      className="text-white/40 hover:text-violet-400 mr-4 transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => handleDeleteEntry(entry.id)}
-                      className="text-white/40 hover:text-red-400 transition-colors"
-                    >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+            <tbody>
+              {filteredEntries.map((entry, i) => (
+                <tr
+                  key={entry.id}
+                  className={`hover:bg-white/[0.03] transition-colors ${
+                    i !== filteredEntries.length - 1 ? 'border-b border-white/[0.04]' : ''
+                  }`}
+                >
+                  <td className="px-4 py-2.5 text-[13px] text-white/60">{entry.reading}</td>
+                  <td className="px-4 py-2.5 text-[13px] text-white/90 font-medium">{entry.word}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => openEditDialog(entry)}
+                        className="p-1.5 rounded-md text-white/30 hover:text-blue-400 hover:bg-white/[0.05] transition-all"
+                        title="Edit"
+                        aria-label="Edit entry"
+                      >
+                        <PencilIcon className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteEntry(entry.id)}
+                        className="p-1.5 rounded-md text-white/30 hover:text-red-400 hover:bg-white/[0.05] transition-all"
+                        title="Delete"
+                        aria-label="Delete entry"
+                      >
+                        <TrashIcon className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      ) : (
-        <div className="text-center py-16 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-          <svg
-            className="w-12 h-12 mx-auto mb-4 text-white/20"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-          </svg>
-          <p className="text-sm text-white/50">No dictionary entries yet.</p>
-          <p className="text-xs mt-1 text-white/30">
+        </Card>
+      ) : !isLoading ? (
+        <Card className="py-12 text-center">
+          <BookIcon className="w-10 h-10 mx-auto mb-3 text-white/15" />
+          <p className="text-[13px] text-white/40">No dictionary entries yet.</p>
+          <p className="text-[12px] text-white/25 mt-1">
             Click &quot;New Word&quot; to add custom words for better transcription.
           </p>
-        </div>
-      )}
+        </Card>
+      ) : null}
 
       {/* Add/Edit Dialog */}
       {(isAddDialogOpen || editingEntry) && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+        <ModalOverlay onClose={closeDialog}>
           <div
-            className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-6 w-96 shadow-2xl"
+            className="p-5"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newReading.trim() && newWord.trim()) {
                 e.preventDefault();
@@ -518,62 +685,54 @@ function DictionarySection() {
               }
             }}
           >
-            <h3 className="text-lg font-semibold mb-5 bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
+            <h3 className="text-[16px] font-semibold text-white mb-5">
               {editingEntry ? 'Edit Word' : 'Add New Word'}
             </h3>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-white/60 mb-2">Reading</label>
-                <input
-                  type="text"
+                <Label>Reading</Label>
+                <TextInput
                   value={newReading}
-                  onChange={(e) => setNewReading(e.target.value)}
+                  onChange={setNewReading}
                   placeholder="e.g., dictate"
                   autoFocus
-                  className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-sm focus:outline-none focus:border-violet-400/50 focus:bg-white/10 transition-all placeholder-white/30"
                 />
               </div>
-
               <div>
-                <label className="block text-sm font-medium text-white/60 mb-2">Word</label>
-                <input
-                  type="text"
+                <Label>Word</Label>
+                <TextInput
                   value={newWord}
-                  onChange={(e) => setNewWord(e.target.value)}
+                  onChange={setNewWord}
                   placeholder="e.g., Dictate"
-                  className="w-full px-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-sm focus:outline-none focus:border-violet-400/50 focus:bg-white/10 transition-all placeholder-white/30"
                 />
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={closeDialog}
-                className="px-5 py-2.5 text-sm text-white/50 hover:text-white/80 transition-colors"
-              >
+            <div className="flex justify-end gap-2 mt-6">
+              <PrimaryButton onClick={closeDialog} variant="secondary">
                 Cancel
-              </button>
-              <button
+              </PrimaryButton>
+              <PrimaryButton
                 onClick={editingEntry ? handleUpdateEntry : handleAddEntry}
-                className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-cyan-500 hover:from-violet-400 hover:to-cyan-400 text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-violet-500/20"
+                disabled={!newReading.trim() || !newWord.trim()}
               >
                 {editingEntry ? 'Save' : 'Add'}
-              </button>
+              </PrimaryButton>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );
 }
 
+// ============================================================================
+// Shortcuts Section
+// ============================================================================
+
 function ShortcutsSection() {
-  const [shortcuts, setShortcuts] = useState<ShortcutSettings>({
-    toggleRecording: 'Alt+Space',
-    cancelRecording: 'Escape',
-    openSettings: 'F2',
-  });
+  const [shortcuts, setShortcuts] = useState<ShortcutSettings>({ ...DEFAULT_SHORTCUTS });
   const [editingKey, setEditingKey] = useState<keyof ShortcutSettings | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [currentKeys, setCurrentKeys] = useState<string>('');
@@ -661,6 +820,18 @@ function ShortcutsSection() {
       const key = event.key;
       const code = event.code;
 
+      // Escape cancels recording
+      if (key === 'Escape') {
+        setIsRecording(false);
+        isRecordingRef.current = false;
+        setEditingKey(null);
+        editingKeyRef.current = null;
+        setCurrentKeys('');
+        pressedKeysRef.current.clear();
+        window.electronAPI.resumeShortcuts();
+        return;
+      }
+
       // Normalize space key
       let keyToAdd = key;
       if (key === ' ' || code === 'Space') {
@@ -705,7 +876,6 @@ function ShortcutsSection() {
       } else {
         setCurrentKeys('');
       }
-      // Debug: key=${key}, remaining=${pressedKeysRef.current.size}
     };
 
     document.addEventListener('keydown', handleKeyDown, true);
@@ -793,13 +963,8 @@ function ShortcutsSection() {
     }
   };
 
-  const resetToDefaults = async () => {
-    const defaultShortcuts: ShortcutSettings = {
-      toggleRecording: 'Alt+Space',
-      cancelRecording: 'Escape',
-      openSettings: 'F2',
-    };
-    setShortcuts(defaultShortcuts);
+  const resetToDefaults = () => {
+    setShortcuts({ ...DEFAULT_SHORTCUTS });
     setMessage(null);
   };
 
@@ -811,107 +976,86 @@ function ShortcutsSection() {
 
   if (isLoading) {
     return (
-      <div className="max-w-2xl">
-        <div className="text-center text-white/50 py-8">Loading shortcuts...</div>
+      <div>
+        <SectionHeader title="Keyboard Shortcuts" />
+        <div className="py-8 text-center text-[13px] text-white/40">Loading shortcuts...</div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-2xl">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-          Keyboard Shortcuts
-        </h2>
-      </div>
+    <div>
+      <SectionHeader title="Keyboard Shortcuts" />
 
       {message && (
-        <div
-          className={`mb-6 p-4 rounded-xl backdrop-blur-sm ${
-            message.type === 'success'
-              ? 'bg-emerald-500/10 border border-emerald-400/30'
-              : 'bg-red-500/10 border border-red-400/30'
-          }`}
-        >
-          <p className={`text-sm ${message.type === 'success' ? 'text-emerald-300' : 'text-red-300'}`}>
-            {message.text}
-          </p>
-        </div>
+        <AlertBox variant={message.type === 'success' ? 'success' : 'error'}>
+          {message.text}
+        </AlertBox>
       )}
 
-      <div className="space-y-4">
+      <Card className="divide-y divide-white/[0.04]">
         {(Object.keys(shortcuts) as Array<keyof ShortcutSettings>).map((key) => (
-          <div
-            key={key}
-            className="p-5 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium text-white">{shortcutLabels[key].label}</p>
-                <p className="text-sm text-white/50 mt-1">{shortcutLabels[key].description}</p>
-              </div>
-              <button
-                onClick={() => isRecording && editingKey === key ? cancelRecording() : startRecording(key)}
-                className={`px-4 py-2 rounded-lg font-mono text-sm transition-all min-w-[120px] ${
-                  isRecording && editingKey === key
-                    ? 'bg-violet-500/30 border border-violet-400/50 text-violet-300 animate-pulse'
-                    : 'bg-white/10 border border-white/10 text-white hover:bg-white/20 hover:border-white/20'
-                }`}
-              >
-                {isRecording && editingKey === key
-                  ? (currentKeys || 'Press keys...')
-                  : shortcuts[key]}
-              </button>
+          <div key={key} className="flex items-center justify-between px-4 py-3.5">
+            <div className="min-w-0">
+              <p className="text-[13px] font-medium text-white/90">{shortcutLabels[key].label}</p>
+              <p className="text-[12px] text-white/40 mt-0.5">{shortcutLabels[key].description}</p>
             </div>
+            <button
+              onClick={() => isRecording && editingKey === key ? cancelRecording() : startRecording(key)}
+              className={`ml-4 px-3 py-1.5 rounded-md font-mono text-[12px] transition-all min-w-[110px] text-center flex-shrink-0 ${
+                isRecording && editingKey === key
+                  ? 'bg-blue-500/20 border border-blue-400/40 text-blue-300 animate-pulse'
+                  : 'bg-[#1e1e1e] border border-white/[0.1] text-white/70 hover:border-white/20 hover:text-white/90'
+              }`}
+            >
+              {isRecording && editingKey === key
+                ? (currentKeys || 'Press keys...')
+                : shortcuts[key]}
+            </button>
           </div>
         ))}
-      </div>
+      </Card>
 
-      <div className="flex gap-3 mt-8">
-        <button
-          onClick={resetToDefaults}
-          className="px-5 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur-sm border border-white/10 hover:border-white/20 text-white text-sm font-medium rounded-xl transition-all"
-        >
+      <div className="flex gap-2 mt-5">
+        <PrimaryButton onClick={resetToDefaults} variant="secondary">
           Reset to Defaults
-        </button>
-        <button
-          onClick={handleSave}
-          disabled={isSaving}
-          className="px-5 py-2.5 bg-gradient-to-r from-violet-500 to-cyan-500 hover:from-violet-400 hover:to-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-medium rounded-xl transition-all shadow-lg shadow-violet-500/20"
-        >
+        </PrimaryButton>
+        <PrimaryButton onClick={handleSave} disabled={isSaving}>
           {isSaving ? 'Saving...' : 'Save Shortcuts'}
-        </button>
+        </PrimaryButton>
       </div>
 
-      <div className="mt-10 p-5 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-        <h3 className="text-sm font-medium mb-3 text-white/80">Tips:</h3>
-        <ul className="text-sm text-white/50 space-y-2 list-disc list-inside">
+      <HelpCard title="Tips">
+        <ul className="space-y-1 list-disc list-inside">
           <li>Click on a shortcut to change it, then press your desired key combination</li>
           <li>Use modifier keys like Alt, Ctrl, Shift, or Command with other keys</li>
           <li>Some shortcuts may conflict with system or other app shortcuts</li>
           <li>Changes take effect immediately after saving</li>
         </ul>
-      </div>
+      </HelpCard>
     </div>
   );
 }
 
+// ============================================================================
+// History Section
+// ============================================================================
+
 function HistorySection() {
   const [entries, setEntries] = useState<TranscriptionHistoryEntry[]>([]);
-  const [filteredEntries, setFilteredEntries] = useState<TranscriptionHistoryEntry[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [showDeleteAllConfirm, setShowDeleteAllConfirm] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     loadEntries();
+    return () => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
+    };
   }, []);
-
-  useEffect(() => {
-    filterEntries();
-  }, [entries, searchQuery]);
 
   const loadEntries = async () => {
     try {
@@ -927,20 +1071,15 @@ function HistorySection() {
     }
   };
 
-  const filterEntries = () => {
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      setFilteredEntries(
-        entries.filter(
-          (e) =>
-            e.originalText.toLowerCase().includes(query) ||
-            e.formattedText.toLowerCase().includes(query)
-        )
-      );
-    } else {
-      setFilteredEntries(entries);
-    }
-  };
+  const filteredEntries = useMemo(() => {
+    if (!searchQuery.trim()) return entries;
+    const query = searchQuery.toLowerCase();
+    return entries.filter(
+      (e) =>
+        e.originalText.toLowerCase().includes(query) ||
+        e.formattedText.toLowerCase().includes(query)
+    );
+  }, [entries, searchQuery]);
 
   const handleDeleteEntry = async (id: string) => {
     try {
@@ -976,12 +1115,13 @@ function HistorySection() {
     });
   };
 
-  const handleCopyToClipboard = async (id: string, text: string) => {
+  const handleCopyToClipboard = useCallback(async (id: string, text: string) => {
+    if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current);
     try {
       await navigator.clipboard.writeText(text);
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch (err) {
+      copyTimeoutRef.current = setTimeout(() => setCopiedId(null), 2000);
+    } catch {
       // Fallback for Electron
       const textArea = document.createElement('textarea');
       textArea.value = text;
@@ -990,157 +1130,116 @@ function HistorySection() {
       document.execCommand('copy');
       document.body.removeChild(textArea);
       setCopiedId(id);
-      setTimeout(() => setCopiedId(null), 2000);
+      copyTimeoutRef.current = setTimeout(() => setCopiedId(null), 2000);
     }
-  };
+  }, []);
 
   return (
-    <div className="max-w-4xl">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-semibold bg-gradient-to-r from-white to-white/70 bg-clip-text text-transparent">
-          History
-        </h2>
-        {entries.length > 0 && (
-          <button
-            onClick={() => setShowDeleteAllConfirm(true)}
-            className="px-5 py-2.5 bg-red-500/20 hover:bg-red-500/30 text-red-300 hover:text-red-200 text-sm font-medium rounded-xl transition-all border border-red-400/30 flex items-center gap-2"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-            </svg>
-            Delete All
-          </button>
-        )}
-      </div>
+    <div>
+      <SectionHeader
+        title="History"
+        action={
+          entries.length > 0 ? (
+            <PrimaryButton onClick={() => setShowDeleteAllConfirm(true)} variant="danger">
+              <span className="flex items-center gap-1.5">
+                <TrashIcon className="w-3.5 h-3.5" />
+                Delete All
+              </span>
+            </PrimaryButton>
+          ) : undefined
+        }
+      />
 
-      {/* Error Display */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-500/10 backdrop-blur-sm border border-red-400/30 rounded-xl flex items-center justify-between">
-          <p className="text-sm text-red-300">{error}</p>
-          <button onClick={() => setError(null)} className="text-red-300 hover:text-red-200 ml-2 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
-      )}
+      {error && <AlertBox variant="error" onDismiss={() => setError(null)}>{error}</AlertBox>}
 
-      {/* Loading State */}
       {isLoading && (
-        <div className="mb-4 text-center text-white/50 text-sm">Loading history...</div>
+        <div className="py-6 text-center text-[13px] text-white/40">Loading history...</div>
       )}
 
-      {/* Search */}
-      <div className="relative mb-6">
-        <svg
-          className="absolute left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 text-white/40"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
-        <input
-          type="text"
-          placeholder="Search history..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="w-full pl-11 pr-4 py-3 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl text-sm focus:outline-none focus:border-violet-400/50 focus:bg-white/10 transition-all placeholder-white/30"
-        />
-      </div>
+      <SearchInput value={searchQuery} onChange={setSearchQuery} placeholder="Search history..." />
 
-      {/* Table */}
       {filteredEntries.length > 0 ? (
-        <div className="bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl overflow-hidden">
+        <Card className="overflow-hidden">
           <table className="w-full">
-            <thead className="bg-white/5 border-b border-white/10">
-              <tr>
-                <th className="px-5 py-4 text-left text-xs font-medium text-white/50 uppercase tracking-wider">
+            <thead>
+              <tr className="border-b border-white/[0.06]">
+                <th className="px-4 py-2.5 text-left text-[11px] font-medium text-white/40 uppercase tracking-wider w-36">
                   Date
                 </th>
-                <th className="px-5 py-4 text-left text-xs font-medium text-white/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-left text-[11px] font-medium text-white/40 uppercase tracking-wider">
                   Text
                 </th>
-                <th className="px-5 py-4 text-right text-xs font-medium text-white/50 uppercase tracking-wider">
+                <th className="px-4 py-2.5 text-right text-[11px] font-medium text-white/40 uppercase tracking-wider w-16">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/5">
-              {filteredEntries.map((entry) => (
-                <tr key={entry.id} className="hover:bg-white/5 transition-colors">
-                  <td className="px-5 py-4 text-sm text-white/50 whitespace-nowrap">
+            <tbody>
+              {filteredEntries.map((entry, i) => (
+                <tr
+                  key={entry.id}
+                  className={`hover:bg-white/[0.03] transition-colors ${
+                    i !== filteredEntries.length - 1 ? 'border-b border-white/[0.04]' : ''
+                  }`}
+                >
+                  <td className="px-4 py-2.5 text-[12px] text-white/40 whitespace-nowrap font-mono">
                     {formatDate(entry.createdAt)}
                   </td>
                   <td
-                    className="px-5 py-4 text-sm text-white cursor-pointer hover:text-violet-300 transition-colors"
+                    className="px-4 py-2.5 text-[13px] text-white/80 cursor-pointer hover:text-blue-300 transition-colors"
                     onClick={() => handleCopyToClipboard(entry.id, entry.formattedText)}
                     title="Click to copy"
                   >
                     <div className="max-w-md truncate flex items-center gap-2">
                       {entry.formattedText}
                       {copiedId === entry.id && (
-                        <span className="text-xs text-emerald-400">Copied!</span>
+                        <span className="text-[11px] text-emerald-400 flex-shrink-0">Copied!</span>
                       )}
                     </div>
                   </td>
-                  <td className="px-5 py-4 text-sm text-right">
+                  <td className="px-4 py-2.5 text-right">
                     <button
                       onClick={() => handleDeleteEntry(entry.id)}
-                      className="text-white/40 hover:text-red-400 transition-colors"
+                      className="p-1.5 rounded-md text-white/30 hover:text-red-400 hover:bg-white/[0.05] transition-all"
                       title="Delete"
+                      aria-label="Delete history entry"
                     >
-                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
+                      <TrashIcon className="w-3.5 h-3.5" />
                     </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      ) : (
-        <div className="text-center py-16 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
-          <svg
-            className="w-12 h-12 mx-auto mb-4 text-white/20"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-sm text-white/50">No transcription history yet.</p>
-          <p className="text-xs mt-1 text-white/30">
+        </Card>
+      ) : !isLoading ? (
+        <Card className="py-12 text-center">
+          <ClockIcon className="w-10 h-10 mx-auto mb-3 text-white/15" />
+          <p className="text-[13px] text-white/40">No transcription history yet.</p>
+          <p className="text-[12px] text-white/25 mt-1">
             Your transcription history will appear here after you use voice input.
           </p>
-        </div>
-      )}
+        </Card>
+      ) : null}
 
       {/* Delete All Confirmation Dialog */}
       {showDeleteAllConfirm && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-slate-900/90 backdrop-blur-xl border border-white/10 rounded-2xl p-6 w-96 shadow-2xl">
-            <h3 className="text-lg font-semibold mb-3 text-white">Delete All History?</h3>
-            <p className="text-sm text-white/60 mb-6">
+        <ModalOverlay onClose={() => setShowDeleteAllConfirm(false)}>
+          <div className="p-5">
+            <h3 className="text-[16px] font-semibold text-white mb-2">Delete All History?</h3>
+            <p className="text-[13px] text-white/50 mb-5 leading-relaxed">
               This will permanently delete all {entries.length} transcription records. This action cannot be undone.
             </p>
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={() => setShowDeleteAllConfirm(false)}
-                className="px-5 py-2.5 text-sm text-white/50 hover:text-white/80 transition-colors"
-              >
+            <div className="flex justify-end gap-2">
+              <PrimaryButton onClick={() => setShowDeleteAllConfirm(false)} variant="secondary">
                 Cancel
-              </button>
-              <button
-                onClick={handleDeleteAll}
-                className="px-5 py-2.5 bg-red-500 hover:bg-red-400 text-white text-sm font-medium rounded-xl transition-all"
-              >
+              </PrimaryButton>
+              <PrimaryButton onClick={handleDeleteAll} variant="danger">
                 Delete All
-              </button>
+              </PrimaryButton>
             </div>
           </div>
-        </div>
+        </ModalOverlay>
       )}
     </div>
   );
