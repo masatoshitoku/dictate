@@ -701,13 +701,17 @@ app.whenReady().then(() => {
   // Enforce CSP via response headers (supplements the <meta> tag in index.html).
   // This ensures CSP is active even in development (Vite dev server) where the
   // HTML <meta> CSP may be bypassed.
+  const isDev = !!process.env.VITE_DEV_SERVER_URL;
+  const csp = isDev
+    // Dev: allow Vite HMR WebSocket and inline scripts for hot-reload
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self';"
+    // Prod: strict policy
+    : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';";
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
         ...details.responseHeaders,
-        'Content-Security-Policy': [
-          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';",
-        ],
+        'Content-Security-Policy': [csp],
       },
     });
   });
