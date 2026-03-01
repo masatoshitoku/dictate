@@ -89,14 +89,19 @@ function getDefaultWebPreferences(): Electron.WebPreferences {
  * Load URL based on environment (development vs production)
  */
 function loadWindowURL(targetWindow: BrowserWindow, hash?: string): void {
+  console.log('[loadWindowURL] VITE_DEV_SERVER_URL:', process.env.VITE_DEV_SERVER_URL);
+  console.log('[loadWindowURL] hash:', hash);
+  console.log('[loadWindowURL] using:', process.env.VITE_DEV_SERVER_URL ? 'dev server' : 'file');
   // Use Vite dev server only when explicitly in development mode
   if (process.env.VITE_DEV_SERVER_URL) {
     const url = hash ? `${process.env.VITE_DEV_SERVER_URL}#${hash}` : process.env.VITE_DEV_SERVER_URL;
+    console.log('[loadWindowURL] loading URL:', url);
     targetWindow.loadURL(url);
   } else {
     // __dirname is dist/main/main, renderer is at dist/renderer
     const rendererPath = path.join(__dirname, '../../renderer/index.html');
     debugLog(`Renderer path: ${rendererPath}`);
+    console.log('[loadWindowURL] loading file:', rendererPath);
     const options = hash ? { hash } : undefined;
     targetWindow.loadFile(rendererPath, options);
   }
@@ -190,7 +195,9 @@ function createWindow(): void {
 }
 
 function createSettingsWindow(): void {
+  console.log('[createSettingsWindow] creating new window');
   if (settingsWindow) {
+    console.log('[createSettingsWindow] window already exists, focusing');
     settingsWindow.focus();
     return;
   }
@@ -703,8 +710,8 @@ app.whenReady().then(() => {
   // HTML <meta> CSP may be bypassed.
   const isDev = !!process.env.VITE_DEV_SERVER_URL;
   const csp = isDev
-    // Dev: allow Vite HMR WebSocket and inline scripts for hot-reload
-    ? "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws:; font-src 'self';"
+    // Dev: allow Vite HMR WebSocket, inline scripts, and unsafe-eval for ES module dynamic imports
+    ? "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*; font-src 'self';"
     // Prod: strict policy
     : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self';";
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
