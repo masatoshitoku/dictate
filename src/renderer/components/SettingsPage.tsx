@@ -1160,7 +1160,7 @@ function HistorySection() {
 
       {filteredEntries.length > 0 ? (
         <Card className="overflow-hidden">
-          <table className="w-full">
+          <table className="w-full table-fixed">
             <thead>
               <tr className="border-b border-white/[0.06]">
                 <th className="px-4 py-2.5 text-left text-[11px] font-medium text-white/40 uppercase tracking-wider w-36">
@@ -1190,10 +1190,14 @@ function HistorySection() {
                     onClick={() => handleCopyToClipboard(entry.id, entry.formattedText)}
                     title="Click to copy"
                   >
-                    <div className="max-w-md truncate flex items-center gap-2">
-                      {entry.formattedText}
+                    <div className="relative">
+                      <span className="block truncate">
+                        {entry.formattedText}
+                      </span>
                       {copiedId === entry.id && (
-                        <span className="text-[11px] text-emerald-400 flex-shrink-0">Copied!</span>
+                        <span className="absolute right-0 top-1/2 -translate-y-1/2 text-[11px] text-emerald-400 bg-[#2a2a2a] pl-2 pr-1 rounded">
+                          Copied!
+                        </span>
                       )}
                     </div>
                   </td>
