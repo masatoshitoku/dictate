@@ -72,9 +72,17 @@ export interface ElectronAPI {
   onStopAudioCapture: (callback: () => void) => () => void;
   onCancelRecording: (callback: () => void) => () => void;
   onRequestInterimAudio: (callback: () => void) => () => void;
+  onDeepgramInterim: (callback: (text: string) => void) => () => void;
 
   sendAudioData: (data: ArrayBuffer) => void;
   sendInterimAudioData: (data: ArrayBuffer) => void;
+  sendAudioChunk: (data: ArrayBuffer) => void;
+
+  // Deepgram API Key
+  saveDeepgramApiKey: (apiKey: string) => Promise<boolean>;
+  hasDeepgramApiKey: () => Promise<boolean>;
+  getMaskedDeepgramApiKey: () => Promise<string | null>;
+  validateDeepgramApiKey: (apiKey: string) => Promise<{ valid: boolean; error?: string }>;
 }
 
 const electronAPI: ElectronAPI = {
@@ -166,6 +174,12 @@ const electronAPI: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.REQUEST_INTERIM_AUDIO, handler);
   },
 
+  onDeepgramInterim: (callback) => {
+    const handler = (_event: Electron.IpcRendererEvent, text: string) => callback(text);
+    ipcRenderer.on(IPC_CHANNELS.DEEPGRAM_INTERIM, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.DEEPGRAM_INTERIM, handler);
+  },
+
   sendAudioData: (data) => {
     ipcRenderer.send(IPC_CHANNELS.AUDIO_DATA_READY, data);
   },
@@ -173,6 +187,16 @@ const electronAPI: ElectronAPI = {
   sendInterimAudioData: (data) => {
     ipcRenderer.send(IPC_CHANNELS.SEND_INTERIM_AUDIO, data);
   },
+
+  sendAudioChunk: (data) => {
+    ipcRenderer.send(IPC_CHANNELS.AUDIO_CHUNK, data);
+  },
+
+  // Deepgram API Key
+  saveDeepgramApiKey: (apiKey) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_DEEPGRAM_API_KEY, apiKey),
+  hasDeepgramApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.HAS_DEEPGRAM_API_KEY),
+  getMaskedDeepgramApiKey: () => ipcRenderer.invoke(IPC_CHANNELS.GET_MASKED_DEEPGRAM_API_KEY),
+  validateDeepgramApiKey: (apiKey) => ipcRenderer.invoke(IPC_CHANNELS.VALIDATE_DEEPGRAM_API_KEY, apiKey),
 };
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI);

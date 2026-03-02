@@ -463,7 +463,7 @@ function ApiKeySection() {
         </div>
       </Card>
 
-      <HelpCard title="How to get your API Key">
+      <HelpCard title="How to get your Gemini API Key">
         <ol className="space-y-1.5 list-decimal list-inside">
           <li>
             Go to{' '}
@@ -478,6 +478,161 @@ function ApiKeySection() {
           </li>
           <li>Sign in with your Google account</li>
           <li>Click &quot;Create API key&quot;</li>
+          <li>Copy the generated key and paste it above</li>
+        </ol>
+      </HelpCard>
+
+      <DeepgramApiKeySection />
+    </div>
+  );
+}
+
+// ============================================================================
+// Deepgram API Key Section (Real-time transcription)
+// ============================================================================
+
+function DeepgramApiKeySection() {
+  const [apiKey, setApiKey] = useState('');
+  const [maskedKey, setMaskedKey] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [validationResult, setValidationResult] = useState<{
+    valid: boolean;
+    error?: string;
+  } | null>(null);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [saveResult, setSaveResult] = useState<'success' | 'error' | null>(null);
+
+  useEffect(() => {
+    loadCurrentKey();
+  }, []);
+
+  const loadCurrentKey = async () => {
+    try {
+      const masked = await window.electronAPI.getMaskedDeepgramApiKey();
+      setMaskedKey(masked);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleValidate = async () => {
+    if (!apiKey.trim()) return;
+    setIsValidating(true);
+    setValidationResult(null);
+    try {
+      const result = await window.electronAPI.validateDeepgramApiKey(apiKey.trim());
+      setValidationResult(result);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setValidationResult({ valid: false, error: `Validation failed: ${message}` });
+    } finally {
+      setIsValidating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!apiKey.trim()) return;
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      const success = await window.electronAPI.saveDeepgramApiKey(apiKey.trim());
+      if (success) {
+        setSaveMessage('Deepgram API key saved. Real-time transcription will be active on next recording.');
+        setSaveResult('success');
+        setApiKey('');
+        await loadCurrentKey();
+      } else {
+        setSaveMessage('Failed to save Deepgram API key.');
+        setSaveResult('error');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      setSaveMessage(`Failed to save: ${message}`);
+      setSaveResult('error');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-8">
+      <SectionHeader title="Deepgram API Key (Real-time)" />
+
+      <AlertBox variant="info">
+        Deepgram enables real-time transcription as you speak. Without it, text appears only after recording stops.
+      </AlertBox>
+
+      {maskedKey && (
+        <Card className="p-4 mb-5">
+          <div className="text-[12px] font-medium text-white/40 uppercase tracking-wider mb-1">Current Deepgram Key</div>
+          <div className="font-mono text-[13px] text-white/70">{maskedKey}</div>
+        </Card>
+      )}
+
+      <Card className="p-4 space-y-4">
+        <div>
+          <Label>{maskedKey ? 'Enter new Deepgram API Key' : 'Enter your Deepgram API Key'}</Label>
+          <TextInput
+            type={showKey ? 'text' : 'password'}
+            value={apiKey}
+            onChange={(v) => {
+              setApiKey(v);
+              setValidationResult(null);
+              setSaveMessage(null);
+              setSaveResult(null);
+            }}
+            placeholder="Enter Deepgram API key..."
+            rightElement={
+              <button
+                onClick={() => setShowKey(!showKey)}
+                className="text-[12px] text-white/40 hover:text-white/70 transition-colors px-1"
+              >
+                {showKey ? 'Hide' : 'Show'}
+              </button>
+            }
+          />
+        </div>
+
+        {validationResult && (
+          <AlertBox variant={validationResult.valid ? 'success' : 'error'}>
+            {validationResult.valid ? 'Deepgram API key is valid!' : validationResult.error}
+          </AlertBox>
+        )}
+
+        {saveMessage && (
+          <AlertBox variant={saveResult === 'success' ? 'success' : 'error'}>
+            {saveMessage}
+          </AlertBox>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <PrimaryButton onClick={handleValidate} disabled={!apiKey.trim() || isValidating} variant="secondary">
+            {isValidating ? 'Validating...' : 'Validate'}
+          </PrimaryButton>
+          <PrimaryButton onClick={handleSave} disabled={!apiKey.trim() || isSaving}>
+            {isSaving ? 'Saving...' : 'Save'}
+          </PrimaryButton>
+        </div>
+      </Card>
+
+      <HelpCard title="How to get your Deepgram API Key">
+        <ol className="space-y-1.5 list-decimal list-inside">
+          <li>
+            Go to{' '}
+            <a
+              href="https://console.deepgram.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-blue-400 hover:text-blue-300 transition-colors underline underline-offset-2"
+            >
+              Deepgram Console
+            </a>
+            {' '}(free $200 credit)
+          </li>
+          <li>Create an account or sign in</li>
+          <li>Go to API Keys and create a new key</li>
           <li>Copy the generated key and paste it above</li>
         </ol>
       </HelpCard>

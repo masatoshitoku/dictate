@@ -211,6 +211,57 @@ export async function correctTypedText(
 }
 
 /**
+ * Delete N characters backwards (Backspace × N) then paste replacement text.
+ * Works universally in terminals, text fields, and editors.
+ * Backspace deletes exactly one character per press regardless of app type.
+ */
+export async function deleteBackwardsAndPaste(
+  charCount: number,
+  newText: string,
+  targetApp?: string
+): Promise<void> {
+  // Set clipboard BEFORE activating target app and sending keystrokes
+  clipboard.writeText(newText);
+
+  const safeApp = targetApp ? escapeAppleScript(targetApp) : '';
+  const batchSize = 10;
+  const fullBatches = Math.floor(charCount / batchSize);
+  const remainder = charCount % batchSize;
+
+  // Build AppleScript: activate app → delete N chars → paste — all in one script
+  let script = 'tell application "System Events"\n';
+  if (targetApp) {
+    script += `  try\n    set frontmost of process "${safeApp}" to true\n  end try\n`;
+  }
+  script += '  delay 0.3\n';
+
+  // Delete in batches of 10 with small delays to prevent keystroke dropping
+  for (let i = 0; i < fullBatches; i++) {
+    script += `  repeat ${batchSize} times\n    key code 51\n  end repeat\n`;
+    script += '  delay 0.03\n';
+  }
+  if (remainder > 0) {
+    script += `  repeat ${remainder} times\n    key code 51\n  end repeat\n`;
+  }
+
+  // Paste after deletion
+  script += '  delay 0.15\n';
+  script += '  keystroke "v" using command down\n';
+  script += 'end tell';
+
+  debugLog(`deleteBackwardsAndPaste: charCount=${charCount}, targetApp="${targetApp ?? '(none)'}"`);
+
+  try {
+    await execFileAsync('osascript', ['-e', script]);
+    debugLog('deleteBackwardsAndPaste: success');
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    debugLog(`deleteBackwardsAndPaste error: ${message}`);
+    throw new Error(`Failed to delete and paste: ${message}`);
+  }
+}
+
+/**
  * Check if accessibility permission is granted
  * Required for keystroke simulation
  */

@@ -13,26 +13,46 @@ import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
 import { historyService } from './services/history';
 import { setupAutoUpdater } from './services/updater';
-import { typeText, getFrontmostApp, checkAccessibilityPermission, correctTypedText } from './text-input';
+import { typeText, getFrontmostApp, checkAccessibilityPermission } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
-import { removeJapaneseSpaces, computeDelta } from '../shared/text-processing';
+import { removeJapaneseSpaces } from '../shared/text-processing';
 import {
   getApiKey,
   hasApiKey,
   saveApiKey,
   validateApiKey,
   getMaskedApiKey,
-  isEncryptionAvailable
+  isEncryptionAvailable,
+  saveDeepgramApiKey,
+  getDeepgramApiKey,
+  hasDeepgramApiKey,
+  getMaskedDeepgramApiKey,
+  validateDeepgramApiKey
 } from './secure-storage';
+import { DeepgramStreaming, DeepgramTranscript } from './services/deepgram-streaming';
 import { createLogger, logCriticalError } from './utils/logger';
+import * as fs from 'fs';
+import * as os from 'os';
+
+// Direct file logging — bypasses logCriticalError to debug why logs are missing
+const INTERIM_DEBUG_LOG = require('path').join(os.homedir(), 'dictate-interim-debug.log');
+function interimLog(msg: string): void {
+  try {
+    const line = `[${new Date().toISOString()}] ${msg}\n`;
+    fs.appendFileSync(INTERIM_DEBUG_LOG, line);
+  } catch { /* ignore */ }
+}
+
+// Test that interimLog works at module load time
+interimLog('=== MODULE LOADED ===');
 
 // ============================================================================
 // Constants
 // ============================================================================
 
-const WINDOW_WIDTH = 176;
-// WINDOW_HEIGHT must match the CSS h-[44px] container + 4px vertical padding from bg-transparent wrapper
-const WINDOW_HEIGHT = 48;
+const WINDOW_WIDTH = 500;
+// Window is transparent — extra space is invisible. Tall enough for interim text preview + waveform bar.
+const WINDOW_HEIGHT = 200;
 const WINDOW_BOTTOM_MARGIN = 40;
 const SETTINGS_WINDOW_WIDTH = 800;
 const SETTINGS_WINDOW_HEIGHT = 600;
@@ -40,7 +60,6 @@ const SETTINGS_WINDOW_MIN_WIDTH = 600;
 const SETTINGS_WINDOW_MIN_HEIGHT = 400;
 const WINDOW_HIDE_DELAY_MS = 100;
 const MIN_AUDIO_BUFFER_SIZE = 1000; // Minimum audio buffer size in bytes
-const INTERIM_INTERVAL_MS = 3000; // Interim transcription interval
 
 // ============================================================================
 // Store
@@ -63,16 +82,20 @@ let appIsQuitting = false;
 let stopPromise: Promise<void> | null = null;
 let previousFrontApp: string | null = null; // App that was active before recording started
 
-// Interim (real-time) transcription state
-interface InterimState {
-  totalTypedText: string;
-  isTranscribing: boolean;
-  intervalHandle: ReturnType<typeof setInterval> | null;
+// Real-time transcription state (Deepgram streaming)
+interface StreamingState {
+  totalRecognizedText: string;       // All text typed so far via real-time
+  isTyping: boolean;            // Guard: prevent concurrent typeText calls
+  deepgram: DeepgramStreaming | null;
+  pendingFinals: string[];      // Accumulated final transcript segments
+  chunkCount: number;           // Audio chunk counter (reset per recording session)
 }
-const interimState: InterimState = {
-  totalTypedText: '',
-  isTranscribing: false,
-  intervalHandle: null,
+const streamingState: StreamingState = {
+  totalRecognizedText: '',
+  isTyping: false,
+  deepgram: null,
+  pendingFinals: [],
+  chunkCount: 0,
 };
 
 // ============================================================================
@@ -240,7 +263,7 @@ let lastStartTime = 0;
 const START_DEBOUNCE_MS = 300; // Only debounce starting, not stopping
 
 async function toggleRecording(): Promise<void> {
-  logCriticalError('interim', `toggleRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
+  interimLog(`toggleRecording() called — isRecording=${isRecording}`);
   const now = Date.now();
 
   if (!mainWindow) {
@@ -291,54 +314,83 @@ async function toggleRecording(): Promise<void> {
   }
 }
 
-function resetInterimState(): void {
-  if (interimState.intervalHandle) {
-    clearInterval(interimState.intervalHandle);
-    interimState.intervalHandle = null;
+function resetStreamingState(): void {
+  if (streamingState.deepgram) {
+    streamingState.deepgram.close();
+    streamingState.deepgram = null;
   }
-  interimState.totalTypedText = '';
-  interimState.isTranscribing = false;
+  streamingState.totalRecognizedText = '';
+  streamingState.isTyping = false;
+  streamingState.pendingFinals = [];
+  streamingState.chunkCount = 0;
 }
 
-function startInterimInterval(): void {
-  logCriticalError('interim', `startInterimInterval called — mainWindow=${mainWindow ? 'present' : 'null'}`);
-  if (!mainWindow) return;
-  const targetWindow = mainWindow;
+/**
+ * Start Deepgram streaming connection for real-time transcription.
+ * Returns true if streaming was started, false if no Deepgram key available.
+ */
+function startDeepgramStreaming(): boolean {
+  const deepgramKey = getDeepgramApiKey();
+  if (!deepgramKey) {
+    interimLog('No Deepgram API key — real-time transcription disabled');
+    return false;
+  }
 
-  logCriticalError('interim', `interval started (every ${INTERIM_INTERVAL_MS}ms)`);
-  debugLog(`Interim interval started (every ${INTERIM_INTERVAL_MS}ms)`);
-  let tickCount = 0;
-  interimState.intervalHandle = setInterval(() => {
-    tickCount++;
-    logCriticalError('interim', `interval tick #${tickCount} — sending REQUEST_INTERIM_AUDIO`);
-    // Request interim audio from renderer
-    safeSend(targetWindow, IPC_CHANNELS.REQUEST_INTERIM_AUDIO);
-  }, INTERIM_INTERVAL_MS);
+  const settings = store.get('settings');
+
+  const deepgram = new DeepgramStreaming({
+    onTranscript: async (transcript: DeepgramTranscript) => {
+      if (!isRecording) return;
+
+      if (transcript.isFinal) {
+        // Final result — accumulate and send to overlay preview (no typing into target app)
+        streamingState.pendingFinals.push(transcript.text);
+        const fullText = removeJapaneseSpaces(streamingState.pendingFinals.join(''));
+        streamingState.totalRecognizedText = fullText;
+        interimLog(`Deepgram final: "${transcript.text}" | fullText="${fullText}"`);
+        safeSend(mainWindow, IPC_CHANNELS.DEEPGRAM_INTERIM, fullText);
+      } else {
+        // Interim result — show accumulated finals + current interim in overlay preview
+        const interimFull = removeJapaneseSpaces([...streamingState.pendingFinals, transcript.text].join(''));
+        interimLog(`Deepgram interim: "${transcript.text}"`);
+        safeSend(mainWindow, IPC_CHANNELS.DEEPGRAM_INTERIM, interimFull);
+      }
+    },
+    onError: (error: Error) => {
+      interimLog(`Deepgram error: ${error.message}`);
+      logCriticalError('deepgram', error);
+    },
+    onClose: () => {
+      interimLog('Deepgram connection closed');
+    },
+  });
+
+  deepgram.connect(deepgramKey, settings.language === 'auto' ? 'ja' : settings.language);
+  streamingState.deepgram = deepgram;
+  interimLog('Deepgram streaming started');
+  return true;
 }
 
 async function startRecording(): Promise<void> {
-  logCriticalError('interim', `startRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
+  interimLog(`startRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
   if (isRecording || !mainWindow) return;
 
   try {
-    resetInterimState();
+    resetStreamingState();
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'recording');
-    logCriticalError('interim', 'about to call audioRecorder.startRecording()');
     audioRecorder.startRecording();
-    logCriticalError('interim', 'audioRecorder.startRecording() completed');
     isRecording = true;
     trayManager.setRecordingState(true, getTrayConfig());
 
-    // Start interim transcription interval after a brief delay
-    // (give the recorder time to accumulate some audio)
-    logCriticalError('interim', 'about to call startInterimInterval()');
-    startInterimInterval();
-    debugLog('Recording started (with interim transcription)');
+    // Start Deepgram streaming for real-time transcription
+    const streamingStarted = startDeepgramStreaming();
+    interimLog(`Recording started (deepgram=${streamingStarted})`);
+    debugLog(`Recording started (deepgram=${streamingStarted})`);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    logCriticalError('interim', `startRecording() CATCH: ${message}`);
+    interimLog(`startRecording() error: ${message}`);
     debugLog(`Failed to start recording: ${message}`);
-    resetInterimState();
+    resetStreamingState();
     notifyError(mainWindow, 'Failed to start recording. Please check microphone permissions.');
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
     mainWindow.hide();
@@ -367,7 +419,7 @@ async function processTranscription(formattedText: string): Promise<void> {
 }
 
 async function stopRecording(): Promise<void> {
-  logCriticalError('interim', `stopRecording() called — isRecording=${isRecording}`);
+  interimLog(`stopRecording() called — isRecording=${isRecording}`);
   // If already stopping, wait for the existing promise
   if (stopPromise) {
     debugLog('Already stopping, waiting for existing promise');
@@ -382,47 +434,40 @@ async function stopRecording(): Promise<void> {
   }
 
   stopPromise = (async () => {
-    // Tracks whether we already sent a terminal status (error/idle) to the renderer.
-    // The finally block uses this to avoid sending a redundant 'idle' after an error status.
     let statusAlreadyUpdated = false;
 
-    // Capture interim state BEFORE resetting — resetInterimState() zeroes totalTypedText
-    const savedInterimText = interimState.totalTypedText;
+    // Capture streaming state BEFORE resetting
+    const savedRecognizedText = streamingState.totalRecognizedText;
 
-    // Stop interim interval immediately
-    resetInterimState();
+    // Stop Deepgram streaming immediately (preview stays visible during Gemini processing)
+    resetStreamingState();
 
     try {
       safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
       debugLog('Stopping recording...');
       const audioBuffer = await audioRecorder.stopRecording();
+      interimLog(`Audio buffer received: ${audioBuffer.length} bytes (min=${MIN_AUDIO_BUFFER_SIZE})`);
       // Skip if audio is too short (likely no real speech)
       if (audioBuffer.length < MIN_AUDIO_BUFFER_SIZE) {
+        interimLog('Audio too short, skipping transcription');
         debugLog('Audio too short, skipping transcription');
+        safeSend(targetWindow, IPC_CHANNELS.DEEPGRAM_INTERIM, '');
         targetWindow.hide();
         return;
       }
 
+      interimLog(`Calling Gemini API (final) with ${audioBuffer.length} bytes of audio...`);
       debugLog('Calling Gemini API (final)...');
       const gemini = getGeminiService();
       const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
       const transcribedText = await gemini.transcribeAudioBuffer(audioBuffer, 'audio/webm', dictionaryPrompt);
       debugLog(`Final transcription: "${transcribedText}"`);
+      interimLog(`Final (Gemini): "${transcribedText}" | deepgramRecognized: "${savedRecognizedText}"`);
 
-      // Hide window before typing
+      // Clear interim preview and hide window before typing
+      safeSend(targetWindow, IPC_CHANNELS.DEEPGRAM_INTERIM, '');
       targetWindow.hide();
-
-      // Skip if no speech detected
-      if (!transcribedText || transcribedText.length === 0) {
-        debugLog('No speech detected, skipping');
-        return;
-      }
-
-      // Format once, use for both history and typing
-      const formattedText = removeJapaneseSpaces(transcribedText);
-      historyService.add(transcribedText, formattedText);
-      debugLog(`History saved: "${formattedText}"`);
 
       // If accessibility is not granted, open System Settings automatically
       if (!systemPreferences.isTrustedAccessibilityClient(false)) {
@@ -434,30 +479,30 @@ async function stopRecording(): Promise<void> {
         return;
       }
 
-      // Check if interim already typed some text and if final differs
-      // Use savedInterimText (captured before resetInterimState()) — interimState.totalTypedText is already '' here
-      const previouslyTyped = savedInterimText;
-      if (previouslyTyped.length > 0 && formattedText !== previouslyTyped) {
-        // Final transcription differs from what was typed — correct it
-        debugLog(`Correcting: "${previouslyTyped}" → "${formattedText}"`);
-        await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
-        await correctTypedText(
-          previouslyTyped.length,
-          formattedText,
-          previousFrontApp ?? undefined
-        );
-      } else if (previouslyTyped.length === 0) {
-        // No interim text was typed — type the full result (short recording fallback)
+      // New architecture: Deepgram text was only shown in overlay preview (never typed).
+      // Type the final Gemini result once into the target app.
+      // Fall back to Deepgram recognized text if Gemini returned empty.
+      const formattedText = transcribedText ? removeJapaneseSpaces(transcribedText) : '';
+
+      if (formattedText.length > 0) {
+        historyService.add(transcribedText, formattedText);
+        interimLog(`Typing Gemini final: "${formattedText}"`);
         await processTranscription(formattedText);
+      } else if (savedRecognizedText.length > 0) {
+        // Gemini returned empty — fall back to Deepgram text
+        historyService.add(savedRecognizedText, savedRecognizedText);
+        interimLog(`Gemini empty, falling back to Deepgram: "${savedRecognizedText}"`);
+        await processTranscription(savedRecognizedText);
+      } else {
+        debugLog('No speech detected, skipping');
       }
-      // else: previouslyTyped === formattedText — nothing to correct
 
     } catch (error: unknown) {
       statusAlreadyUpdated = true;
       const message = error instanceof Error ? error.message : 'Unknown error';
       debugLog(`Recording error: ${message}`);
+      interimLog(`stopRecording error: ${message}`);
 
-      // Show error to user
       notifyError(targetWindow, 'Transcription failed');
       safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
 
@@ -465,7 +510,7 @@ async function stopRecording(): Promise<void> {
     } finally {
       isRecording = false;
       stopPromise = null;
-      resetInterimState();
+      resetStreamingState();
       trayManager.setRecordingState(false, getTrayConfig());
       if (!statusAlreadyUpdated) {
         safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
@@ -481,7 +526,10 @@ async function cancelRecording(): Promise<void> {
   if (!targetWindow) return;
 
   // Always stop interim interval on cancel
-  resetInterimState();
+  resetStreamingState();
+
+  // Clear interim preview in overlay
+  safeSend(targetWindow, IPC_CHANNELS.DEEPGRAM_INTERIM, '');
 
   if (stopPromise) {
     // A stop is already in-flight — await it; stopRecording handles its own cleanup
@@ -576,68 +624,22 @@ function setupIPC(): void {
   safeHandle(IPC_CHANNELS.TOGGLE_RECORDING, () => toggleRecording());
   safeHandle(IPC_CHANNELS.CANCEL_RECORDING, () => cancelRecording());
 
-  // Interim audio handler (Renderer → Main, ipcMain.on for fire-and-forget)
-  ipcMain.on(IPC_CHANNELS.SEND_INTERIM_AUDIO, async (_event, audioData: ArrayBuffer) => {
-    logCriticalError('interim', `SEND_INTERIM_AUDIO handler reached — isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing}, dataByteLength=${audioData?.byteLength ?? 'null'}`);
-    // Guard: only process if still recording and not already transcribing
-    if (!isRecording || interimState.isTranscribing) {
-      logCriticalError('interim', `guard fired — skipping (isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing})`);
-      debugLog(`Interim audio skipped (isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing})`);
-      return;
-    }
-
+  // Audio chunk handler — forward to Deepgram WebSocket for real-time transcription
+  ipcMain.on(IPC_CHANNELS.AUDIO_CHUNK, (_event, audioData: ArrayBuffer) => {
+    if (!isRecording || !streamingState.deepgram) return;
     const buffer = Buffer.from(audioData);
-    // Use a lower threshold for interim (100 bytes) — even small audio is valid for real-time transcription.
-    // MIN_AUDIO_BUFFER_SIZE (1000) is only for final recording to skip too-short recordings.
-    const MIN_INTERIM_BUFFER_SIZE = 100;
-    debugLog(`Interim audio received: ${buffer.length} bytes`);
-    logCriticalError('interim', `audio received: ${buffer.length} bytes, isRecording=${isRecording}`);
-    if (buffer.length < MIN_INTERIM_BUFFER_SIZE) {
-      debugLog(`Interim audio too small (${buffer.length} < ${MIN_INTERIM_BUFFER_SIZE}), skipping`);
-      logCriticalError('interim', `audio too small (${buffer.length} bytes), skipping`);
-      return;
-    }
-
-    interimState.isTranscribing = true;
-    try {
-      const gemini = getGeminiService();
-      const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
-      const transcribedText = await gemini.transcribeInterim(buffer, 'audio/webm', dictionaryPrompt);
-      debugLog(`Interim transcription result: "${transcribedText ?? ''}"`);
-      logCriticalError('interim', `transcription result: "${transcribedText ?? ''}" (${buffer.length} bytes audio)`);
-
-      if (!transcribedText || !isRecording) {
-        logCriticalError('interim', `skipping: transcribedText="${transcribedText ?? ''}", isRecording=${isRecording}`);
-        return;
+    if (buffer.length > 0) {
+      streamingState.chunkCount++;
+      if (streamingState.chunkCount <= 5 || streamingState.chunkCount % 20 === 0) {
+        interimLog(`AUDIO_CHUNK #${streamingState.chunkCount}: ${buffer.length} bytes, deepgram.connected=${streamingState.deepgram.isConnected()}`);
       }
-
-      const formattedText = removeJapaneseSpaces(transcribedText);
-      const delta = computeDelta(interimState.totalTypedText, formattedText);
-      debugLog(`Interim delta computed: "${delta}" (prev="${interimState.totalTypedText}", new="${formattedText}")`);
-      logCriticalError('interim', `delta="${delta}", prev="${interimState.totalTypedText}", new="${formattedText}", targetApp="${previousFrontApp ?? 'none'}"`);
-
-      if (delta.length > 0) {
-        debugLog(`Interim delta: "${delta}" (total: "${interimState.totalTypedText}" → "${formattedText}")`);
-        const settings = store.get('settings');
-        try {
-          await typeText(delta, { speed: settings.typingSpeed, targetApp: previousFrontApp ?? undefined });
-          logCriticalError('interim', `typeText success: "${delta}"`);
-          interimState.totalTypedText = formattedText;
-        } catch (typeError: unknown) {
-          const typeMsg = typeError instanceof Error ? typeError.message : 'Unknown typeText error';
-          logCriticalError('interim', `typeText FAILED: ${typeMsg}`);
-          throw typeError;
-        }
-      } else {
-        logCriticalError('interim', `delta empty — no text typed`);
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      debugLog(`Interim transcription error (ignored): ${message}`);
-      logCriticalError('interim', `error: ${message}`);
-    } finally {
-      interimState.isTranscribing = false;
+      streamingState.deepgram.sendAudio(buffer);
     }
+  });
+
+  // Legacy interim audio handler (kept for backwards compatibility, no longer actively used)
+  ipcMain.on(IPC_CHANNELS.SEND_INTERIM_AUDIO, () => {
+    // No-op: replaced by AUDIO_CHUNK + Deepgram streaming
   });
 
   // Settings
@@ -690,6 +692,13 @@ function setupIPC(): void {
   // Encryption check — returns false on error
   safeHandleSoft(IPC_CHANNELS.IS_ENCRYPTION_AVAILABLE, false,
     () => isEncryptionAvailable());
+
+  // Deepgram API Key management
+  safeHandle(IPC_CHANNELS.SAVE_DEEPGRAM_API_KEY, (apiKey: string) => saveDeepgramApiKey(apiKey));
+  safeHandle(IPC_CHANNELS.HAS_DEEPGRAM_API_KEY, () => hasDeepgramApiKey());
+  safeHandle(IPC_CHANNELS.GET_MASKED_DEEPGRAM_API_KEY, () => getMaskedDeepgramApiKey());
+  safeHandleSoft(IPC_CHANNELS.VALIDATE_DEEPGRAM_API_KEY, { valid: false, error: 'Validation failed' },
+    (apiKey: string) => validateDeepgramApiKey(apiKey));
 
   // Shortcuts
   safeHandle(IPC_CHANNELS.GET_SHORTCUTS, () => {

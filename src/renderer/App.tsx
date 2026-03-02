@@ -24,7 +24,7 @@ function closeAudioContext(ctx: AudioContext | null): void {
 }
 
 export default function App() {
-  const { status, setStatus, setLastTranscription, setError } = useStore();
+  const { status, setStatus, setLastTranscription, setInterimText, interimText, setError } = useStore();
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const currentSessionChunksRef = useRef<Blob[]>([]);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -171,11 +171,18 @@ export default function App() {
         const sessionChunks: Blob[] = [];
         currentSessionChunksRef.current = sessionChunks;
         mediaRecorder.ondataavailable = (event) => {
-          if (event.data.size > 0) sessionChunks.push(event.data);
+          if (event.data.size > 0) {
+            sessionChunks.push(event.data);
+            // Stream each chunk to main process for Deepgram real-time transcription
+            event.data.arrayBuffer().then((buffer) => {
+              window.electronAPI.sendAudioChunk(buffer);
+            }).catch(() => { /* ignore chunk send errors */ });
+          }
         };
 
         mediaRecorderRef.current = mediaRecorder;
-        mediaRecorder.start();
+        // Start with 250ms timeslice for near-real-time streaming
+        mediaRecorder.start(250);
       } catch (error) {
         console.error('[Dictate] Failed to start audio capture:', error);
         cleanupRecording();
@@ -290,6 +297,10 @@ export default function App() {
       }
     });
 
+    const unsubscribeDeepgramInterim = window.electronAPI.onDeepgramInterim((text) => {
+      setInterimText(text);
+    });
+
     return () => {
       unsubscribeStatus();
       unsubscribeTranscription();
@@ -298,9 +309,10 @@ export default function App() {
       unsubscribeStopCapture();
       unsubscribeCancelRecording();
       unsubscribeRequestInterim();
+      unsubscribeDeepgramInterim();
       cleanupRecording();
     };
-  }, [setStatus, setLastTranscription, setError, cleanupRecording, initGlobalStream, resetAudioState]);
+  }, [setStatus, setLastTranscription, setInterimText, setError, cleanupRecording, initGlobalStream, resetAudioState]);
 
   const handleCancel = () => {
     window.electronAPI.cancelRecording().catch(() => {
@@ -326,8 +338,18 @@ export default function App() {
     }
   };
 
+  // Show interim text during recording AND processing (stays visible until window hides)
+  const showInterim = (isRecording || isProcessing) && interimText.length > 0;
+
   return (
-    <div className="h-screen w-screen flex items-center justify-center bg-transparent">
+    <div className="h-screen w-screen flex flex-col items-center justify-end bg-transparent pb-[8px]">
+      {/* Interim transcription preview — shown above waveform bar during recording */}
+      {showInterim && (
+        <div className="mb-[6px] max-w-[480px] w-full px-[12px] py-[8px] rounded-[10px] bg-noir-panel/[0.93] text-white/[0.75] text-[13px] leading-[1.5] overflow-y-auto max-h-[120px] whitespace-pre-wrap">
+          {interimText}
+        </div>
+      )}
+
       <div className="flex items-center gap-[8px] rounded-[12px] px-[8px] transition-colors duration-300 h-[44px] bg-noir-panel/[0.91]">
         {/* Cancel button */}
         <button

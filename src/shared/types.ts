@@ -114,6 +114,18 @@ export const IPC_CHANNELS = {
   REQUEST_INTERIM_AUDIO: 'request-interim-audio',
   SEND_INTERIM_AUDIO: 'send-interim-audio',
 
+  // Deepgram streaming (real-time audio chunks)
+  AUDIO_CHUNK: 'audio-chunk',
+
+  // Deepgram interim text preview (Main -> Renderer for overlay display)
+  DEEPGRAM_INTERIM: 'deepgram-interim',
+
+  // Deepgram API Key
+  SAVE_DEEPGRAM_API_KEY: 'save-deepgram-api-key',
+  HAS_DEEPGRAM_API_KEY: 'has-deepgram-api-key',
+  GET_MASKED_DEEPGRAM_API_KEY: 'get-masked-deepgram-api-key',
+  VALIDATE_DEEPGRAM_API_KEY: 'validate-deepgram-api-key',
+
   // Events (Main -> Renderer)
   STATUS_CHANGED: 'status-changed',
   TRANSCRIPTION_RESULT: 'transcription-result',

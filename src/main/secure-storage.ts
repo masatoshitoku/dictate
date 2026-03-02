@@ -6,10 +6,14 @@ import { maskApiKeyString } from '../shared/string-utils';
 const store = new Store<{
   encryptedApiKey?: string;
   apiKey?: string; // Fallback for systems without encryption
+  encryptedDeepgramApiKey?: string;
+  deepgramApiKey?: string; // Fallback for systems without encryption
 }>();
 
 const API_KEY_ENCRYPTED = 'encryptedApiKey';
 const API_KEY_PLAIN = 'apiKey';
+const DEEPGRAM_KEY_ENCRYPTED = 'encryptedDeepgramApiKey';
+const DEEPGRAM_KEY_PLAIN = 'deepgramApiKey';
 
 /**
  * Check if encryption is available on this system
@@ -118,4 +122,97 @@ export function getMaskedApiKey(): string | null {
   const apiKey = getApiKey();
   if (!apiKey) return null;
   return maskApiKeyString(apiKey);
+}
+
+// ============================================================================
+// Deepgram API Key Management
+// ============================================================================
+
+/**
+ * Save Deepgram API key securely
+ */
+export function saveDeepgramApiKey(apiKey: string): boolean {
+  try {
+    if (safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(apiKey);
+      store.set(DEEPGRAM_KEY_ENCRYPTED, encrypted.toString('base64'));
+      store.delete(DEEPGRAM_KEY_PLAIN);
+    } else {
+      store.set(DEEPGRAM_KEY_PLAIN, apiKey);
+    }
+    return true;
+  } catch (error: unknown) {
+    if (!app.isPackaged) console.error('Failed to save Deepgram API key:', error);
+    return false;
+  }
+}
+
+/**
+ * Get stored Deepgram API key
+ */
+export function getDeepgramApiKey(): string | null {
+  // Development: allow environment variable override
+  if (!app.isPackaged && process.env.DEEPGRAM_API_KEY) {
+    return process.env.DEEPGRAM_API_KEY;
+  }
+
+  try {
+    const encrypted = store.get(DEEPGRAM_KEY_ENCRYPTED);
+    if (encrypted && safeStorage.isEncryptionAvailable()) {
+      const buffer = Buffer.from(encrypted, 'base64');
+      return safeStorage.decryptString(buffer);
+    }
+
+    const plainKey = store.get(DEEPGRAM_KEY_PLAIN);
+    if (plainKey) {
+      return plainKey;
+    }
+  } catch (error: unknown) {
+    if (!app.isPackaged) console.error('Failed to retrieve Deepgram API key:', error);
+  }
+
+  return null;
+}
+
+/**
+ * Check if a Deepgram API key is stored
+ */
+export function hasDeepgramApiKey(): boolean {
+  return !!getDeepgramApiKey();
+}
+
+/**
+ * Get a masked version of the stored Deepgram API key
+ */
+export function getMaskedDeepgramApiKey(): string | null {
+  const apiKey = getDeepgramApiKey();
+  if (!apiKey) return null;
+  return maskApiKeyString(apiKey);
+}
+
+/**
+ * Validate Deepgram API key by making a test request
+ */
+export async function validateDeepgramApiKey(apiKey: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    // Use Deepgram's /v1/listen endpoint with a minimal request to validate
+    const response = await fetch('https://api.deepgram.com/v1/projects', {
+      headers: {
+        Authorization: `Token ${apiKey}`,
+      },
+    });
+
+    if (response.ok) {
+      return { valid: true };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { valid: false, error: 'Invalid API key. Please check and try again.' };
+    }
+
+    return { valid: false, error: `Validation failed: HTTP ${response.status}` };
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    return { valid: false, error: `Validation failed: ${errorMessage}` };
+  }
 }

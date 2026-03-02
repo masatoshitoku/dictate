@@ -54,11 +54,13 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.21.0",
+    "@types/ws": "^8.18.1",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.7.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "uuid": "^13.0.0",
+    "ws": "^8.19.0",
     "zustand": "^4.4.7"
   },
   "build": {
@@ -73,7 +75,9 @@
       "category": "public.app-category.productivity",
       "icon": "resources/icon.icns",
       "identity": "Apple Development: m.toku.mobile@gmail.com (U8WM579A3T)",
-      "signIgnore": ["\\.pak$"],
+      "signIgnore": [
+        "\\.pak$"
+      ],
       "target": [
         {
           "target": "dmg",
