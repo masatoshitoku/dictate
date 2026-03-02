@@ -21,6 +21,21 @@ const FULLWIDTH_SPACE = /\u3000/g;
  */
 const MAX_ITERATIONS = 100;
 
+/**
+ * Compute the delta (new text) between previously typed text and new transcription.
+ * Uses prefix matching: if newText starts with previousText, returns the suffix.
+ * If they don't match (transcription changed), returns empty string (skip).
+ */
+export function computeDelta(previousText: string, newText: string): string {
+  if (!newText) return '';
+  if (!previousText) return newText;
+  if (newText.startsWith(previousText)) {
+    return newText.slice(previousText.length);
+  }
+  // Prefix mismatch — skip this interim, let final correction handle it
+  return '';
+}
+
 export function removeJapaneseSpaces(text: string): string {
   let result = text;
   let prev = '';

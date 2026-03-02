@@ -13,9 +13,9 @@ import { initGeminiService, getGeminiService } from './services/gemini';
 import { dictionaryService } from './services/dictionary';
 import { historyService } from './services/history';
 import { setupAutoUpdater } from './services/updater';
-import { typeText, getFrontmostApp, checkAccessibilityPermission } from './text-input';
+import { typeText, getFrontmostApp, checkAccessibilityPermission, correctTypedText } from './text-input';
 import { DEFAULT_SETTINGS, AppSettings, IPC_CHANNELS, ShortcutSettings, DEFAULT_SHORTCUTS } from '../shared/types';
-import { removeJapaneseSpaces } from '../shared/text-processing';
+import { removeJapaneseSpaces, computeDelta } from '../shared/text-processing';
 import {
   getApiKey,
   hasApiKey,
@@ -40,6 +40,7 @@ const SETTINGS_WINDOW_MIN_WIDTH = 600;
 const SETTINGS_WINDOW_MIN_HEIGHT = 400;
 const WINDOW_HIDE_DELAY_MS = 100;
 const MIN_AUDIO_BUFFER_SIZE = 1000; // Minimum audio buffer size in bytes
+const INTERIM_INTERVAL_MS = 3000; // Interim transcription interval
 
 // ============================================================================
 // Store
@@ -61,6 +62,18 @@ let isRecording = false;
 let appIsQuitting = false;
 let stopPromise: Promise<void> | null = null;
 let previousFrontApp: string | null = null; // App that was active before recording started
+
+// Interim (real-time) transcription state
+interface InterimState {
+  totalTypedText: string;
+  isTranscribing: boolean;
+  intervalHandle: ReturnType<typeof setInterval> | null;
+}
+const interimState: InterimState = {
+  totalTypedText: '',
+  isTranscribing: false,
+  intervalHandle: null,
+};
 
 // ============================================================================
 // Shared Utilities
@@ -227,6 +240,7 @@ let lastStartTime = 0;
 const START_DEBOUNCE_MS = 300; // Only debounce starting, not stopping
 
 async function toggleRecording(): Promise<void> {
+  logCriticalError('interim', `toggleRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
   const now = Date.now();
 
   if (!mainWindow) {
@@ -277,18 +291,54 @@ async function toggleRecording(): Promise<void> {
   }
 }
 
+function resetInterimState(): void {
+  if (interimState.intervalHandle) {
+    clearInterval(interimState.intervalHandle);
+    interimState.intervalHandle = null;
+  }
+  interimState.totalTypedText = '';
+  interimState.isTranscribing = false;
+}
+
+function startInterimInterval(): void {
+  logCriticalError('interim', `startInterimInterval called — mainWindow=${mainWindow ? 'present' : 'null'}`);
+  if (!mainWindow) return;
+  const targetWindow = mainWindow;
+
+  logCriticalError('interim', `interval started (every ${INTERIM_INTERVAL_MS}ms)`);
+  debugLog(`Interim interval started (every ${INTERIM_INTERVAL_MS}ms)`);
+  let tickCount = 0;
+  interimState.intervalHandle = setInterval(() => {
+    tickCount++;
+    logCriticalError('interim', `interval tick #${tickCount} — sending REQUEST_INTERIM_AUDIO`);
+    // Request interim audio from renderer
+    safeSend(targetWindow, IPC_CHANNELS.REQUEST_INTERIM_AUDIO);
+  }, INTERIM_INTERVAL_MS);
+}
+
 async function startRecording(): Promise<void> {
+  logCriticalError('interim', `startRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
   if (isRecording || !mainWindow) return;
 
   try {
+    resetInterimState();
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'recording');
+    logCriticalError('interim', 'about to call audioRecorder.startRecording()');
     audioRecorder.startRecording();
+    logCriticalError('interim', 'audioRecorder.startRecording() completed');
     isRecording = true;
     trayManager.setRecordingState(true, getTrayConfig());
-    debugLog('Recording started');
+
+    // Start interim transcription interval after a brief delay
+    // (give the recorder time to accumulate some audio)
+    logCriticalError('interim', 'about to call startInterimInterval()');
+    startInterimInterval();
+    debugLog('Recording started (with interim transcription)');
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
+    logCriticalError('interim', `startRecording() CATCH: ${message}`);
     debugLog(`Failed to start recording: ${message}`);
+    resetInterimState();
     notifyError(mainWindow, 'Failed to start recording. Please check microphone permissions.');
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
     mainWindow.hide();
@@ -317,6 +367,7 @@ async function processTranscription(formattedText: string): Promise<void> {
 }
 
 async function stopRecording(): Promise<void> {
+  logCriticalError('interim', `stopRecording() called — isRecording=${isRecording}`);
   // If already stopping, wait for the existing promise
   if (stopPromise) {
     debugLog('Already stopping, waiting for existing promise');
@@ -334,6 +385,13 @@ async function stopRecording(): Promise<void> {
     // Tracks whether we already sent a terminal status (error/idle) to the renderer.
     // The finally block uses this to avoid sending a redundant 'idle' after an error status.
     let statusAlreadyUpdated = false;
+
+    // Capture interim state BEFORE resetting — resetInterimState() zeroes totalTypedText
+    const savedInterimText = interimState.totalTypedText;
+
+    // Stop interim interval immediately
+    resetInterimState();
+
     try {
       safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'processing');
 
@@ -346,11 +404,11 @@ async function stopRecording(): Promise<void> {
         return;
       }
 
-      debugLog('Calling Gemini API...');
+      debugLog('Calling Gemini API (final)...');
       const gemini = getGeminiService();
       const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
       const transcribedText = await gemini.transcribeAudioBuffer(audioBuffer, 'audio/webm', dictionaryPrompt);
-      debugLog(`Transcription completed: "${transcribedText}"`);
+      debugLog(`Final transcription: "${transcribedText}"`);
 
       // Hide window before typing
       targetWindow.hide();
@@ -375,7 +433,24 @@ async function stopRecording(): Promise<void> {
         safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
         return;
       }
-      await processTranscription(formattedText);
+
+      // Check if interim already typed some text and if final differs
+      // Use savedInterimText (captured before resetInterimState()) — interimState.totalTypedText is already '' here
+      const previouslyTyped = savedInterimText;
+      if (previouslyTyped.length > 0 && formattedText !== previouslyTyped) {
+        // Final transcription differs from what was typed — correct it
+        debugLog(`Correcting: "${previouslyTyped}" → "${formattedText}"`);
+        await new Promise(resolve => setTimeout(resolve, WINDOW_HIDE_DELAY_MS));
+        await correctTypedText(
+          previouslyTyped.length,
+          formattedText,
+          previousFrontApp ?? undefined
+        );
+      } else if (previouslyTyped.length === 0) {
+        // No interim text was typed — type the full result (short recording fallback)
+        await processTranscription(formattedText);
+      }
+      // else: previouslyTyped === formattedText — nothing to correct
 
     } catch (error: unknown) {
       statusAlreadyUpdated = true;
@@ -390,6 +465,7 @@ async function stopRecording(): Promise<void> {
     } finally {
       isRecording = false;
       stopPromise = null;
+      resetInterimState();
       trayManager.setRecordingState(false, getTrayConfig());
       if (!statusAlreadyUpdated) {
         safeSend(targetWindow, IPC_CHANNELS.STATUS_CHANGED, 'idle');
@@ -403,6 +479,9 @@ async function stopRecording(): Promise<void> {
 async function cancelRecording(): Promise<void> {
   const targetWindow = mainWindow;
   if (!targetWindow) return;
+
+  // Always stop interim interval on cancel
+  resetInterimState();
 
   if (stopPromise) {
     // A stop is already in-flight — await it; stopRecording handles its own cleanup
@@ -496,6 +575,70 @@ function setupIPC(): void {
   safeHandle(IPC_CHANNELS.STOP_RECORDING, () => stopRecording());
   safeHandle(IPC_CHANNELS.TOGGLE_RECORDING, () => toggleRecording());
   safeHandle(IPC_CHANNELS.CANCEL_RECORDING, () => cancelRecording());
+
+  // Interim audio handler (Renderer → Main, ipcMain.on for fire-and-forget)
+  ipcMain.on(IPC_CHANNELS.SEND_INTERIM_AUDIO, async (_event, audioData: ArrayBuffer) => {
+    logCriticalError('interim', `SEND_INTERIM_AUDIO handler reached — isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing}, dataByteLength=${audioData?.byteLength ?? 'null'}`);
+    // Guard: only process if still recording and not already transcribing
+    if (!isRecording || interimState.isTranscribing) {
+      logCriticalError('interim', `guard fired — skipping (isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing})`);
+      debugLog(`Interim audio skipped (isRecording=${isRecording}, isTranscribing=${interimState.isTranscribing})`);
+      return;
+    }
+
+    const buffer = Buffer.from(audioData);
+    // Use a lower threshold for interim (100 bytes) — even small audio is valid for real-time transcription.
+    // MIN_AUDIO_BUFFER_SIZE (1000) is only for final recording to skip too-short recordings.
+    const MIN_INTERIM_BUFFER_SIZE = 100;
+    debugLog(`Interim audio received: ${buffer.length} bytes`);
+    logCriticalError('interim', `audio received: ${buffer.length} bytes, isRecording=${isRecording}`);
+    if (buffer.length < MIN_INTERIM_BUFFER_SIZE) {
+      debugLog(`Interim audio too small (${buffer.length} < ${MIN_INTERIM_BUFFER_SIZE}), skipping`);
+      logCriticalError('interim', `audio too small (${buffer.length} bytes), skipping`);
+      return;
+    }
+
+    interimState.isTranscribing = true;
+    try {
+      const gemini = getGeminiService();
+      const dictionaryPrompt = dictionaryService.getDictionaryPrompt();
+      const transcribedText = await gemini.transcribeInterim(buffer, 'audio/webm', dictionaryPrompt);
+      debugLog(`Interim transcription result: "${transcribedText ?? ''}"`);
+      logCriticalError('interim', `transcription result: "${transcribedText ?? ''}" (${buffer.length} bytes audio)`);
+
+      if (!transcribedText || !isRecording) {
+        logCriticalError('interim', `skipping: transcribedText="${transcribedText ?? ''}", isRecording=${isRecording}`);
+        return;
+      }
+
+      const formattedText = removeJapaneseSpaces(transcribedText);
+      const delta = computeDelta(interimState.totalTypedText, formattedText);
+      debugLog(`Interim delta computed: "${delta}" (prev="${interimState.totalTypedText}", new="${formattedText}")`);
+      logCriticalError('interim', `delta="${delta}", prev="${interimState.totalTypedText}", new="${formattedText}", targetApp="${previousFrontApp ?? 'none'}"`);
+
+      if (delta.length > 0) {
+        debugLog(`Interim delta: "${delta}" (total: "${interimState.totalTypedText}" → "${formattedText}")`);
+        const settings = store.get('settings');
+        try {
+          await typeText(delta, { speed: settings.typingSpeed, targetApp: previousFrontApp ?? undefined });
+          logCriticalError('interim', `typeText success: "${delta}"`);
+          interimState.totalTypedText = formattedText;
+        } catch (typeError: unknown) {
+          const typeMsg = typeError instanceof Error ? typeError.message : 'Unknown typeText error';
+          logCriticalError('interim', `typeText FAILED: ${typeMsg}`);
+          throw typeError;
+        }
+      } else {
+        logCriticalError('interim', `delta empty — no text typed`);
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      debugLog(`Interim transcription error (ignored): ${message}`);
+      logCriticalError('interim', `error: ${message}`);
+    } finally {
+      interimState.isTranscribing = false;
+    }
+  });
 
   // Settings
   safeHandle(IPC_CHANNELS.GET_SETTINGS, () => store.get('settings'));

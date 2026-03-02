@@ -167,6 +167,33 @@ export class GeminiService {
   }
 
   /**
+   * Transcribe audio for interim (real-time) use.
+   * No retries, 8s timeout, returns empty string on failure (best-effort).
+   */
+  async transcribeInterim(
+    audioBuffer: Buffer,
+    mimeType: string = 'audio/webm',
+    dictionaryPrompt: string = ''
+  ): Promise<string> {
+    // Respect circuit breaker but don't update it
+    if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD && Date.now() < this.circuitOpenUntil) {
+      return '';
+    }
+
+    try {
+      const result = await Promise.race([
+        this.doTranscription(audioBuffer, mimeType, dictionaryPrompt),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error('Interim transcription timeout')), 8000)
+        ),
+      ]);
+      return result;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
    * Internal transcription method
    */
   private async doTranscription(

@@ -226,6 +226,70 @@ export default function App() {
       // Status is set to 'idle' by the main process via STATUS_CHANGED IPC
     });
 
+    const unsubscribeRequestInterim = window.electronAPI.onRequestInterimAudio(async () => {
+      const recorder = mediaRecorderRef.current;
+      if (!recorder || recorder.state !== 'recording') return;
+
+      const stream = globalStream;
+      if (!stream) return;
+
+      // Stop-and-restart approach: stopping the recorder produces a complete, self-contained
+      // WebM file (with its own EBML header). This is far more reliable than requestData()
+      // which produces headerless continuation clusters that some decoders (including Gemini)
+      // may struggle to parse correctly when concatenated across multiple requestData() calls.
+      const interimChunks: Blob[] = [];
+      const stopPromise = new Promise<void>(resolve => {
+        recorder.onstop = () => resolve();
+        // Override ondataavailable to collect only this window's audio into interimChunks.
+        // sessionChunks continues to accumulate via the new recorder below.
+        recorder.ondataavailable = (event) => {
+          if (event.data.size > 0) interimChunks.push(event.data);
+        };
+      });
+
+      try {
+        recorder.stop();
+      } catch {
+        // If stop() fails the recorder is likely already inactive; proceed
+      }
+
+      await Promise.race([
+        stopPromise,
+        new Promise<void>(resolve => setTimeout(resolve, 2000)),
+      ]);
+
+      // Restart the recorder immediately so audio capture continues uninterrupted.
+      // The new recorder's chunks go into the existing sessionChunks array for final transcription.
+      const sessionChunks = currentSessionChunksRef.current;
+      try {
+        const newRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        newRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) sessionChunks.push(event.data);
+        };
+        newRecorder.onerror = () => {
+          globalStream = null;
+          cleanupRecording();
+          setError('録音中にエラーが発生しました');
+        };
+        mediaRecorderRef.current = newRecorder;
+        newRecorder.start();
+      } catch {
+        // If restart fails, mediaRecorderRef stays null; the next interim request
+        // will hit the state guard and be skipped gracefully
+      }
+
+      // Send the complete interim audio blob (valid standalone WebM with EBML header)
+      if (interimChunks.length > 0) {
+        try {
+          const audioBlob = new Blob(interimChunks, { type: 'audio/webm' });
+          const arrayBuffer = await audioBlob.arrayBuffer();
+          window.electronAPI.sendInterimAudioData(arrayBuffer);
+        } catch {
+          // Best-effort: ignore errors for interim audio
+        }
+      }
+    });
+
     return () => {
       unsubscribeStatus();
       unsubscribeTranscription();
@@ -233,6 +297,7 @@ export default function App() {
       unsubscribeStartCapture();
       unsubscribeStopCapture();
       unsubscribeCancelRecording();
+      unsubscribeRequestInterim();
       cleanupRecording();
     };
   }, [setStatus, setLastTranscription, setError, cleanupRecording, initGlobalStream, resetAudioState]);

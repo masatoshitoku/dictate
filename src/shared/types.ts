@@ -110,6 +110,10 @@ export const IPC_CHANNELS = {
   PAUSE_SHORTCUTS: 'pause-shortcuts',
   RESUME_SHORTCUTS: 'resume-shortcuts',
 
+  // Interim (Real-time transcription)
+  REQUEST_INTERIM_AUDIO: 'request-interim-audio',
+  SEND_INTERIM_AUDIO: 'send-interim-audio',
+
   // Events (Main -> Renderer)
   STATUS_CHANGED: 'status-changed',
   TRANSCRIPTION_RESULT: 'transcription-result',

@@ -71,8 +71,10 @@ export interface ElectronAPI {
   onStartAudioCapture: (callback: () => void) => () => void;
   onStopAudioCapture: (callback: () => void) => () => void;
   onCancelRecording: (callback: () => void) => () => void;
+  onRequestInterimAudio: (callback: () => void) => () => void;
 
   sendAudioData: (data: ArrayBuffer) => void;
+  sendInterimAudioData: (data: ArrayBuffer) => void;
 }
 
 const electronAPI: ElectronAPI = {
@@ -158,8 +160,18 @@ const electronAPI: ElectronAPI = {
     return () => ipcRenderer.removeListener(IPC_CHANNELS.CANCEL_RECORDING, handler);
   },
 
+  onRequestInterimAudio: (callback) => {
+    const handler = () => callback();
+    ipcRenderer.on(IPC_CHANNELS.REQUEST_INTERIM_AUDIO, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.REQUEST_INTERIM_AUDIO, handler);
+  },
+
   sendAudioData: (data) => {
     ipcRenderer.send(IPC_CHANNELS.AUDIO_DATA_READY, data);
+  },
+
+  sendInterimAudioData: (data) => {
+    ipcRenderer.send(IPC_CHANNELS.SEND_INTERIM_AUDIO, data);
   },
 };
 

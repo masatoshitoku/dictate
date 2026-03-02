@@ -167,6 +167,50 @@ export async function setClipboardAndPaste(text: string, targetApp?: string): Pr
 }
 
 /**
+ * Correct previously typed text by selecting the last N characters and pasting replacement.
+ * Used by final transcription to fix interim typing if they differ.
+ */
+export async function correctTypedText(
+  previousLength: number,
+  newText: string,
+  targetApp?: string
+): Promise<void> {
+  if (previousLength <= 0 || !newText) return;
+
+  // Select last N characters using Shift+Left arrow, then paste replacement
+  const selectScript = targetApp
+    ? `
+      tell application "System Events"
+        try
+          set frontmost of process "${escapeAppleScript(targetApp)}" to true
+        end try
+        delay 0.2
+        repeat ${previousLength} times
+          key code 123 using shift down
+        end repeat
+      end tell
+    `
+    : `
+      tell application "System Events"
+        delay 0.1
+        repeat ${previousLength} times
+          key code 123 using shift down
+        end repeat
+      end tell
+    `;
+
+  try {
+    await execFileAsync('osascript', ['-e', selectScript]);
+    await sleep(PASTE_DELAY_MS);
+    await setClipboardAndPaste(newText, targetApp);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    debugLog(`correctTypedText error: ${message}`);
+    throw new Error(`Failed to correct typed text: ${message}`);
+  }
+}
+
+/**
  * Check if accessibility permission is granted
  * Required for keystroke simulation
  */
