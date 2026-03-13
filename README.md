@@ -1,92 +1,135 @@
 # Dictate
 
-AI-powered voice dictation app for macOS. Speak and have your text automatically transcribed, cleaned up, and typed into any application.
+macOS向けAI音声ディクテーションアプリ。話した内容をAIが自動でテキスト化・整形し、アクティブなアプリに直接入力します。
 
-## Features
+## インストール
 
-- **Voice to Text**: Record your voice and have it transcribed using Gemini AI
-- **Text Formatting**: Automatically removes filler words (えっと, あの, etc.), handles corrections, and adds punctuation
-- **Direct Typing**: Types the result directly into any active application using macOS keystroke simulation
-- **Global Hotkey**: Press `Option+Space` from anywhere to start/stop recording
-- **System Tray**: Runs in the background with a menu bar icon
-- **Auto-Update**: Automatically checks for updates from GitHub Releases
+1. [GitHub Releases](https://github.com/MasatoshiToku/dictate/releases) から `Dictate-x.x.x-universal.dmg` をダウンロード
+2. DMGを開き、`Dictate.app` を Applications フォルダにドラッグ
+3. 初回起動時、Gatekeeperの警告が表示されます → **右クリック → 「開く」** を選択
 
-## Installation
+## 初期設定
 
-Download the latest release from [GitHub Releases](https://github.com/MasatoshiToku/dictate/releases).
+### 1. システム権限の許可
 
-### Manual Build
+| 権限 | 設定場所 | 用途 |
+|------|---------|------|
+| **マイク** | システム設定 → プライバシーとセキュリティ → マイク | 音声録音 |
+| **アクセシビリティ** | システム設定 → プライバシーとセキュリティ → アクセシビリティ | テキスト入力（AppleScript経由） |
 
-```bash
-npm install
-npm run dist:mac
-```
+### 2. APIキーの設定
 
-## Requirements
+Settings画面（`F2` キーまたはトレイメニュー）で設定します。
+
+| キー | 必須 | 取得先 | 用途 |
+|------|------|--------|------|
+| **Gemini API Key** | 必須 | [Google AI Studio](https://aistudio.google.com/apikey) | 音声の文字起こし・テキスト整形 |
+| **Deepgram API Key** | 任意 | [Deepgram Console](https://console.deepgram.com/) | 録音中のリアルタイムプレビュー表示 |
+
+## 使い方
+
+### 基本操作
+
+1. `Option + Space` を押して録音開始
+2. 話す
+3. `Option + Space` をもう一度押して録音停止
+4. AIが自動でテキストを整形し、アクティブなアプリに入力される
+
+### AIによるテキスト整形
+
+- フィラーワード（「えっと」「あの」「えー」等）を自動除去
+- 句読点を自動挿入
+- 言い直し・訂正を反映
+
+### キーボードショートカット
+
+| ショートカット | デフォルト | 動作 |
+|-------------|----------|------|
+| 録音開始/停止 | `Option + Space` | 録音のトグル |
+| 録音キャンセル | `Option + Escape` | 録音を中止（テキスト入力しない） |
+| 設定を開く | `F2` | Settings画面を表示 |
+
+ショートカットは Settings 画面でカスタマイズ可能です。
+
+### メニューバー
+
+システムトレイにアイコンが常駐します。右クリックで以下の操作が可能です。
+
+- 録音開始/停止
+- ウィンドウ表示
+- 設定
+- 終了
+
+## 設定項目
+
+| 設定 | 選択肢 | デフォルト | 説明 |
+|------|--------|----------|------|
+| **録音モード** | トグル / 押しっぱなし | トグル | トグル: 押して開始→押して停止。押しっぱなし: 押し続けている間だけ録音 |
+| **タイピング速度** | instant / fast / natural | fast | テキスト入力の速度。instant=一括、fast=バランス、natural=人間らしい速度 |
+| **言語** | 日本語 / English / auto | 日本語 | 文字起こしの言語 |
+| **自動起動** | ON / OFF | OFF | macOS起動時にアプリを自動起動 |
+| **メニューバー表示** | ON / OFF | ON | トレイアイコンの表示 |
+
+## 追加機能
+
+### 辞書（カスタム単語）
+
+特定の単語を常に別の表記に変換する辞書機能があります。Settings画面で登録・管理できます。
+
+### 文字起こし履歴
+
+過去の文字起こし結果を履歴として保存します。検索・削除が可能です。
+
+### リアルタイムプレビュー（Deepgram）
+
+Deepgram APIキーを設定すると、録音中にリアルタイムで文字起こしのプレビューが表示されます。最終的なテキストはGemini AIが整形したものが入力されます。
+
+### 自動アップデート
+
+GitHub Releasesから新しいバージョンを自動検出し、アップデートを通知します。
+
+## 動作要件
 
 - macOS
-- Gemini API key
+- インターネット接続（Gemini API通信用）
+- Gemini API Key
 
-## Usage
+## トラブルシューティング
 
-1. Start the app
-2. Grant microphone permission when prompted
-3. Grant accessibility permission (System Settings > Privacy & Security > Accessibility)
-4. Enter your Gemini API key in Settings
-5. Press `Option+Space` to start recording
-6. Speak your text
-7. Press `Option+Space` again to stop recording
-8. The transcribed and formatted text will be typed into the active application
+### テキストが入力されない
 
-## Development
+- システム設定 → プライバシーとセキュリティ → アクセシビリティ で Dictate が許可されているか確認
+- アプリを一度終了して再起動
+
+### 録音が開始されない
+
+- システム設定 → プライバシーとセキュリティ → マイク で Dictate が許可されているか確認
+- 他のアプリがマイクを占有していないか確認
+
+### 「Gemini API Key が無効」エラー
+
+- Settings画面でAPIキーが正しく入力されているか確認
+- [Google AI Studio](https://aistudio.google.com/apikey) でキーが有効か確認
+
+### ショートカットが反応しない
+
+- 他のアプリのショートカットと競合している可能性があります → Settings画面で別のキーに変更
+
+## 開発者向け
 
 ```bash
-# Install dependencies
+# 依存関係インストール
 npm install
 
-# Start the development server
+# 開発サーバー起動
 npm run dev
 
-# Build for production
+# プロダクションビルド
 npm run build
 
-# Create distribution package
+# 配布パッケージ作成（macOS universal）
 npm run dist:mac
 ```
-
-## Project Structure
-
-```
-dictate/
-├── src/
-│   ├── main/           # Electron main process
-│   │   ├── index.ts    # Main entry point
-│   │   ├── tray.ts     # System tray management
-│   │   ├── shortcuts.ts # Global hotkey handling
-│   │   ├── text-input.ts # AppleScript keystroke
-│   │   └── services/
-│   │       ├── gemini.ts       # Gemini API integration
-│   │       ├── audio-recorder.ts
-│   │       └── updater.ts      # Auto-update service
-│   ├── preload/        # Electron preload scripts
-│   ├── renderer/       # React UI
-│   └── shared/         # Shared types
-└── resources/          # App icons
-```
-
-## Permissions Required
-
-- **Microphone**: For voice recording
-- **Accessibility**: For typing text into other applications via AppleScript
-
-## Tech Stack
-
-- Electron + Vite + React + TypeScript
-- Gemini API (gemini-2.0-flash) for speech recognition and text formatting
-- Tailwind CSS for styling
-- Zustand for state management
-- electron-store for settings persistence
-- electron-updater for auto-updates
 
 ## License
 
