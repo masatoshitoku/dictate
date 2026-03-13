@@ -54,7 +54,8 @@ async function typeChunk(text: string): Promise<void> {
     await execFileAsync('osascript', ['-e', script]);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    debugLog(`AppleScript error: ${message}`);
+    const stderr = (error as { stderr?: string }).stderr ?? '';
+    debugLog(`typeChunk AppleScript error: ${message} | stderr: ${stderr} | textLength: ${text.length}`);
     throw new Error('Failed to type text. Please check accessibility permissions.');
   }
 }
@@ -113,34 +114,35 @@ export async function typeText(text: string, options: TypeTextOptions = {}): Pro
  * that would appear with "tell application X to activate".
  */
 export async function pasteFromClipboard(targetApp?: string): Promise<void> {
-  let script: string;
+  // Use individual -e arguments instead of a single multiline string.
+  // This avoids issues where osascript misparses multiline scripts passed
+  // as a single -e argument via execFile.
+  let args: string[];
 
   if (targetApp) {
     const safeApp = escapeAppleScript(targetApp);
-    // Activate via System Events process API — requires only Accessibility permission,
-    // NOT the per-app Automation permission that "tell application X to activate" needs.
-    script = `
-      tell application "System Events"
-        try
-          set frontmost of process "${safeApp}" to true
-        end try
-        delay 0.3
-        keystroke "v" using command down
-      end tell
-    `;
+    args = [
+      '-e', 'tell application "System Events"',
+      '-e', 'try',
+      '-e', `set frontmost of process "${safeApp}" to true`,
+      '-e', 'end try',
+      '-e', 'delay 0.3',
+      '-e', 'keystroke "v" using command down',
+      '-e', 'end tell',
+    ];
   } else {
-    script = `
-      tell application "System Events"
-        delay 0.2
-        keystroke "v" using command down
-      end tell
-    `;
+    args = [
+      '-e', 'tell application "System Events"',
+      '-e', 'delay 0.2',
+      '-e', 'keystroke "v" using command down',
+      '-e', 'end tell',
+    ];
   }
 
   debugLog(`pasteFromClipboard: targetApp="${targetApp ?? '(none)'}"`);
 
   try {
-    await execFileAsync('osascript', ['-e', script]);
+    await execFileAsync('osascript', args);
     debugLog('pasteFromClipboard: success');
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

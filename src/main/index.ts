@@ -375,6 +375,17 @@ async function startRecording(): Promise<void> {
   interimLog(`startRecording() called — isRecording=${isRecording}, mainWindow=${mainWindow ? 'present' : 'null'}`);
   if (isRecording || !mainWindow) return;
 
+  // Pre-check accessibility permission before starting recording.
+  // Without this, text input will silently fail after transcription completes.
+  if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+    debugLog('Accessibility permission not granted at recording start — notifying user');
+    shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility');
+    notifyError(mainWindow, 'テキスト入力にはアクセシビリティ権限が必要です。システム設定 > プライバシーとセキュリティ > アクセシビリティ でDictateを許可してください。');
+    safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'error');
+    mainWindow.hide();
+    return;
+  }
+
   try {
     resetStreamingState();
     safeSend(mainWindow, IPC_CHANNELS.STATUS_CHANGED, 'recording');
@@ -732,12 +743,19 @@ function setupIPC(): void {
 
 // Flag to ensure we only call askForMediaAccess() once (prevents infinite dialog loop)
 let hasRequestedMicPermission = false;
+// Cache: once microphone permission is confirmed granted, skip all further checks
+let microphonePermissionGranted = false;
 
 async function requestMicrophonePermission(): Promise<boolean> {
+  if (microphonePermissionGranted) {
+    return true;
+  }
+
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`Microphone permission status: ${status}`);
 
   if (status === 'granted') {
+    microphonePermissionGranted = true;
     return true;
   }
 
@@ -768,6 +786,7 @@ async function requestMicrophonePermission(): Promise<boolean> {
     debugLog(`TCC status after askForMediaAccess: ${newStatus}`);
 
     if (result || (newStatus as string) === 'granted') {
+      microphonePermissionGranted = true;
       // Hide the window again after permission granted
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.hide();
@@ -787,10 +806,20 @@ async function requestMicrophonePermission(): Promise<boolean> {
 }
 
 function checkMicrophonePermission(): boolean {
+  // If permission was already granted and cached, skip the OS query entirely
+  // to avoid the macOS 26 Tahoe beta bug where getMediaAccessStatus() returns
+  // 'not-determined' even after granting, causing repeated permission dialogs.
+  if (microphonePermissionGranted) {
+    debugLog('checkMicrophonePermission: cached=true (skipping OS query)');
+    return true;
+  }
+
   const status = systemPreferences.getMediaAccessStatus('microphone');
   debugLog(`checkMicrophonePermission: ${status}`);
-  // macOS 26 Tahoe beta bug: getMediaAccessStatus() returns 'not-determined'
-  // even when permission is enabled in System Settings → Microphone.
+  if (status === 'granted') {
+    microphonePermissionGranted = true;
+    return true;
+  }
   // Only block if explicitly denied; otherwise allow and let the OS enforce TCC.
   return status !== 'denied';
 }
@@ -897,11 +926,20 @@ app.whenReady().then(() => {
   // Here we just ensure Chromium doesn't block the audio stream.
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     if (['media', 'mediaKeySystem', 'microphone'].includes(permission)) {
+      // If already cached as granted, skip OS query to prevent repeated dialogs
+      if (microphonePermissionGranted) {
+        debugLog(`setPermissionRequestHandler: ${permission} → cached=granted`);
+        callback(true);
+        return;
+      }
       const status = systemPreferences.getMediaAccessStatus('microphone');
       debugLog(`setPermissionRequestHandler: ${permission} → TCC=${status}`);
       if (status === 'denied') {
         callback(false);
         return;
+      }
+      if (status === 'granted') {
+        microphonePermissionGranted = true;
       }
       // Grant Chromium-level permission. The OS TCC check happens at the
       // AVFoundation level regardless of what we return here.

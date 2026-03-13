@@ -79,7 +79,10 @@ export default function App() {
 
     const hasPermission = await window.electronAPI.checkMicrophonePermission();
     if (!hasPermission) {
-      setError('マイクの権限ダイアログが表示されています。「許可」をクリックしてから再度お試しください。');
+      // Only show permission dialog message when permission is explicitly denied.
+      // When checkMicrophonePermission returns true (including cached result),
+      // skip this message entirely to avoid confusing the user.
+      setError('マイクの使用が拒否されています。システム設定 > プライバシーとセキュリティ > マイク でDictateを許可してください。');
       return null;
     }
 
